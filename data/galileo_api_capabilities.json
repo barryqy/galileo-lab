@@ -1,0 +1,62 @@
+{
+  "source": "https://api.galileo.ai/public/v2/openapi.json",
+  "generated_for": "DevNet Galileo Lab",
+  "capabilities": [
+    {
+      "name": "Authentication and API keys",
+      "summary": "Create, list, delete, and exchange API keys for bearer tokens.",
+      "endpoints": ["POST /v2/users/api_keys", "GET /v2/users/{user_id}/api_keys", "DELETE /v2/users/api_keys/{api_key_id}", "POST /v2/login/api_key", "GET /v2/token"]
+    },
+    {
+      "name": "Projects and access control",
+      "summary": "Create projects, list projects, and share projects with users or groups.",
+      "endpoints": ["POST /v2/projects", "POST /v2/projects/paginated", "GET /v2/projects/{project_id}", "POST /v2/projects/{project_id}/users", "POST /v2/projects/{project_id}/groups"]
+    },
+    {
+      "name": "Datasets",
+      "summary": "Upload, version, query, extend, download, and share evaluation datasets.",
+      "endpoints": ["POST /v2/datasets", "GET /v2/datasets", "GET /v2/datasets/{dataset_id}/content", "POST /v2/datasets/{dataset_id}/content/query", "POST /v2/datasets/extend"]
+    },
+    {
+      "name": "Experiments",
+      "summary": "Create batch evaluation runs, attach datasets and scorers, query results, and compare metrics.",
+      "endpoints": ["POST /v2/projects/{project_id}/experiments", "GET /v2/projects/{project_id}/experiments/paginated", "POST /v2/projects/{project_id}/experiments/search", "POST /v2/projects/{project_id}/experiments/{experiment_id}/metrics"]
+    },
+    {
+      "name": "Scorers and metrics",
+      "summary": "Create preset, Luna, LLM, and code scorers; validate scorer versions; list scorer health scores.",
+      "endpoints": ["POST /v2/scorers", "POST /v2/scorers/list", "POST /v2/scorers/{scorer_id}/version/llm", "POST /v2/scorers/code/validate", "GET /v2/scorers/{scorer_id}/health-scores"]
+    },
+    {
+      "name": "Log streams and observability",
+      "summary": "Create production log streams, attach metrics, ingest traces, and query scored runtime traffic.",
+      "endpoints": ["POST /v2/projects/{project_id}/log_streams", "GET /v2/projects/{project_id}/log_streams/paginated", "PATCH /v2/projects/{project_id}/log_streams/{log_stream_id}/metric_settings"]
+    },
+    {
+      "name": "Traces, sessions, and spans",
+      "summary": "Log, update, search, aggregate, count, export, and delete trace data.",
+      "endpoints": ["POST /v2/projects/{project_id}/traces", "POST /v2/projects/{project_id}/spans", "POST /v2/projects/{project_id}/sessions", "POST /v2/projects/{project_id}/traces/search", "POST /otel/v1/traces"]
+    },
+    {
+      "name": "Integrations",
+      "summary": "Configure LLM and data integrations including OpenAI, Anthropic, Bedrock, Azure, Vertex, Databricks, Mistral, NVIDIA, Writer, and custom endpoints.",
+      "endpoints": ["GET /v2/integrations/available", "GET /v2/integrations/{name}/status", "PUT /v2/integrations/openai", "PUT /v2/integrations/anthropic", "PUT /v2/integrations/custom/{name}"]
+    },
+    {
+      "name": "Feedback and annotations",
+      "summary": "Create feedback and annotation templates and apply human ratings to traces or log records.",
+      "endpoints": ["POST /v2/projects/{project_id}/feedback/templates", "PUT /v2/projects/{project_id}/feedback/templates/{template_id}/traces/{trace_id}/rating", "POST /v2/projects/{project_id}/annotation/templates", "POST /v2/projects/{project_id}/annotation/ratings"]
+    },
+    {
+      "name": "Trends dashboards",
+      "summary": "Create and manage dashboard widgets and sections for log stream trends.",
+      "endpoints": ["GET /v2/projects/{project_id}/log_streams/{log_stream_id}/trends", "POST /v2/projects/{project_id}/log_streams/{log_stream_id}/trends/widgets", "POST /v2/projects/{project_id}/log_streams/{log_stream_id}/trends/sections"]
+    },
+    {
+      "name": "Agent Control and runtime guardrails",
+      "summary": "Invoke runtime checks using staged rulesets; current docs point new work to Agent Control while the legacy Protect endpoint remains available.",
+      "endpoints": ["POST /v2/protect/invoke"]
+    }
+  ]
+}
+
