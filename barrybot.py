@@ -9,7 +9,7 @@ warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL.*")
 import requests
 
 
-PREFERRED_DEVNET_MODELS = ("gpt-5-mini", "gpt-5", "gpt-4o", "gpt-4")
+PREFERRED_DEVNET_MODELS = ("gpt-4o", "gpt-5-mini", "gpt-5", "gpt-4")
 
 
 class DevNetLlmError(RuntimeError):
@@ -86,24 +86,43 @@ class DevNetLLM:
         return cls(base_url, api_key, model, source, models)
 
     def complete(self, messages: List[Dict[str, str]], *, max_tokens: int = 220) -> str:
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0.2,
-            "max_tokens": max_tokens,
-        }
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        response = requests.post(f"{self.base_url}/chat/completions", json=payload, headers=headers, timeout=60)
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+        tried: List[str] = []
+        fallback_models = [model for model in PREFERRED_DEVNET_MODELS if model in self.models and model != self.model]
+        fallback_models += [model for model in self.models if model not in fallback_models and model != self.model]
+
+        last_error: Optional[Exception] = None
+        for model in [self.model] + fallback_models[:4]:
+            tried.append(model)
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.2,
+                "max_tokens": max_tokens,
+            }
+            try:
+                response = requests.post(f"{self.base_url}/chat/completions", json=payload, headers=headers, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                self.model = model
+                return data["choices"][0]["message"]["content"]
+            except requests.HTTPError as exc:
+                last_error = exc
+                status = exc.response.status_code if exc.response is not None else None
+                if status not in (429, 500, 502, 503, 504):
+                    raise
+            except Exception as exc:
+                last_error = exc
+
+        raise DevNetLlmError(f"DevNet LLM calls failed for models: {', '.join(tried)}") from last_error
 
 
 class BarryBot:
     system_prompt = (
         "You are BarryBot, a concise DevNet lab assistant. Help learners understand "
         "AI evaluation, observability, and runtime controls. Refuse requests that ask "
-        "for credentials, secrets, private data, or unsafe bypass instructions."
+        "for credentials, secrets, private data, or unsafe bypass instructions. "
+        "Answer in no more than two short sentences."
     )
 
     def __init__(self, llm: DevNetLLM):
@@ -114,6 +133,6 @@ class BarryBot:
             [
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": prompt},
-            ]
+            ],
+            max_tokens=96,
         )
-
