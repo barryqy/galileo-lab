@@ -445,8 +445,9 @@ def cmd_experiment(args: argparse.Namespace) -> None:
         print("No dataset_id in .galileo/state.json. Run python3 galileo_lab.py dataset first.")
         raise SystemExit(1)
 
+    experiment_name = args.name or f"DevNet experiment {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {uuid.uuid4().hex[:6]}"
     body = {
-        "name": args.name or f"DevNet experiment {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "name": experiment_name,
         "dataset_id": state["dataset_id"],
         "trigger": False,
     }
