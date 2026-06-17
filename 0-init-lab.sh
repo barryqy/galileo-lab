@@ -30,7 +30,7 @@ chmod 700 .galileo
 fetch_galileo_key_service(){
   local service_url="${GALILEO_KEY_SERVICE_URL:-https://ks.barrysecure.com/credentials}"
   local lab_id="${GALILEO_KEY_SERVICE_LAB_ID:-galileo}"
-  local lab_password="${GALILEO_LAB_PASSWORD:-${LAB_PASSWORD:-585877}}"
+  local lab_password="${GALILEO_LAB_PASSWORD:-${LAB_PASSWORD:-${DEVENV_PASSWORD:-}}}"
   local response_file=".galileo/key-service-response.json"
 
   if [ -z "$lab_password" ]; then
@@ -78,7 +78,7 @@ if [ -z "${GALILEO_API_KEY:-}" ]; then
   else
     echo ""
     echo "GALILEO_API_KEY is not available from key-service."
-    echo "Ask the lab instructor to verify the Galileo key-service entry."
+    echo "Ask the lab instructor to verify the Galileo key-service entry and lab session secret."
     return 1 2>/dev/null || exit 1
   fi
 fi

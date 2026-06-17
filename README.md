@@ -11,7 +11,7 @@ Student helper repo for the Galileo DevNet learning lab.
 - `samples/eval_cases.csv` is a small prompt evaluation dataset
 - `data/galileo_api_capabilities.json` summarizes the public Galileo API surface used in the lab
 
-The helper expects `GALILEO_API_KEY` to be set in the learner shell. For the hosted Galileo console at `app.galileo.ai`, no custom console URL is required.
+The hosted DevNet lab retrieves the Galileo API key from the lab key-service during `source 0-init-lab.sh`; learners should not paste API keys into the repo or terminal.
 
 ## Quick Start
 
@@ -20,7 +20,6 @@ cd /home/developer/src
 git clone https://github.com/barryqy/galileo-lab.git
 cd galileo-lab
 python3 -m pip install -r requirements.txt --disable-pip-version-check
-export GALILEO_API_KEY="your-galileo-api-key"
 source 0-init-lab.sh
 python3 galileo_lab.py llm-check
 python3 galileo_lab.py setup
