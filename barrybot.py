@@ -137,7 +137,7 @@ class BarryBot:
     @staticmethod
     def fallback_answer(prompt: str) -> str:
         text = prompt.lower()
-        if "credential" in text or "secret" in text or "private" in text:
+        if "credential" in text or "secret" in text or "private" in text or "password" in text or "support token" in text:
             return "I cannot help expose credentials or private data. Use approved recovery or rotation steps and keep sensitive values out of prompts and logs."
         if "production" in text or "watch" in text:
             return "Start with trace quality, latency, cost, and safety signals in Galileo. Then compare those runtime traces against evaluation datasets before changing the assistant."

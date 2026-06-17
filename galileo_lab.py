@@ -34,6 +34,15 @@ GALILEO_OUTCOMES = [
     ("Operate at scale", "Integrations, dashboards, and APIs connect Galileo to real AI delivery workflows."),
 ]
 
+GUARDRAIL_REFUSAL = "I cannot help with requests that expose private credentials."
+GUARDRAIL_TERMS = (
+    "password",
+    "credential",
+    "secret",
+    "private support token",
+    "support token",
+)
+
 
 def load_local_env() -> None:
     for path in (Path(".env"), STATE_DIR / "lab.env"):
@@ -149,6 +158,55 @@ def cmd_outcomes(_: argparse.Namespace) -> None:
     print("Galileo outcomes in this lab")
     for title, detail in GALILEO_OUTCOMES:
         print(f"- {title}: {detail}")
+
+
+def cmd_trace_payload(_: argparse.Namespace) -> None:
+    class SampleLLM:
+        base_url = "DevNet image LLM proxy"
+        model = "gpt-4o"
+        model_source = "devnet-models"
+
+    prompt = sample_prompts()[1]
+    output = BarryBot.fallback_answer(prompt["input"])
+    trace = build_trace(prompt, output, "log-stream-id", SampleLLM())
+    trace["id"] = "trace-id"
+    trace["spans"][0]["id"] = "span-id"
+    trace["spans"][0]["trace_id"] = "trace-id"
+
+    print("Trace payload shape")
+    print(json.dumps({
+        "name": trace["name"],
+        "input": trace["input"],
+        "output": trace["output"],
+        "log_stream_id": trace["log_stream_id"],
+        "tags": trace["tags"],
+        "metadata": trace["metadata"],
+        "spans": trace["spans"],
+    }, indent=2))
+    print("")
+    print("What Galileo learns from this trace")
+    print("- name and tags make the interaction searchable by scenario")
+    print("- input and output preserve the actual application behavior")
+    print("- span metadata records that BarryBot used the DevNet image LLM")
+    print("- project and log stream IDs attach the event to the lab workspace")
+
+
+def cmd_dataset_preview(_: argparse.Namespace) -> None:
+    rows = list(csv.DictReader(DATASET_FILE.open(encoding="utf-8")))
+    print(f"Dataset preview: {DATASET_FILE}")
+    print("Columns: input, expected output, generated output, metadata")
+    print("")
+    for index, row in enumerate(rows, 1):
+        metadata = json.loads(row["metadata"])
+        print(f"Case {index}: {metadata.get('category', 'uncategorized')}")
+        print(f"  input:     {row['input']}")
+        print(f"  expected:  {row['output']}")
+        print(f"  generated: {row['generated_output']}")
+    print("")
+    print("What Galileo does with this")
+    print("- datasets keep evaluation cases stable across prompt and model changes")
+    print("- expected and generated outputs give scorers something to compare")
+    print("- metadata lets teams slice results by scenario, risk, or difficulty")
 
 
 def project_list(client: GalileoClient) -> List[Dict[str, Any]]:
@@ -528,9 +586,50 @@ def cmd_trends(_: argparse.Namespace) -> None:
     print(result)
 
 
+def local_guardrail_decision(prompt: str) -> Dict[str, Any]:
+    text = prompt.lower()
+    matches = [term for term in GUARDRAIL_TERMS if term in text]
+    if matches:
+        return {
+            "decision": "OVERRIDE",
+            "blocked": True,
+            "matched_terms": matches,
+            "response": GUARDRAIL_REFUSAL,
+            "reason": "The request asks BarryBot to reveal credentials or private support data.",
+        }
+    return {
+        "decision": "PASSTHROUGH",
+        "blocked": False,
+        "matched_terms": [],
+        "response": "Continue to BarryBot.",
+        "reason": "No credential or private-data request terms matched the policy.",
+    }
+
+
 def cmd_guardrail(args: argparse.Namespace) -> None:
     client = client_or_exit()
     ids = ensure_project_and_stream(client)
+    safe_prompt = "Summarize why runtime monitoring matters for AI apps."
+    risky_prompt = args.prompt
+    safe_decision = local_guardrail_decision(safe_prompt)
+    risky_decision = local_guardrail_decision(risky_prompt)
+
+    print("BarryBot runtime policy")
+    print("  Rule: block requests that ask for passwords, credentials, secrets, or private support tokens")
+    print(f"  Action: OVERRIDE with: {GUARDRAIL_REFUSAL}")
+    print("")
+    print("Local guardrail decisions")
+    print(f"- Safe input:   {safe_prompt}")
+    print(f"  decision:     {safe_decision['decision']}")
+    print(f"  blocked:      {str(safe_decision['blocked']).lower()}")
+    print(f"  why:          {safe_decision['reason']}")
+    print(f"- Risky input:  {risky_prompt}")
+    print(f"  decision:     {risky_decision['decision']}")
+    print(f"  blocked:      {str(risky_decision['blocked']).lower()}")
+    print(f"  matched:      {', '.join(risky_decision['matched_terms'])}")
+    print(f"  response:     {risky_decision['response']}")
+    print("")
+
     body = {
         "payload": {
             "input": args.prompt,
@@ -550,11 +649,16 @@ def cmd_guardrail(args: argparse.Namespace) -> None:
                 ],
                 "action": {
                     "type": "OVERRIDE",
-                    "choices": ["I cannot help with requests that expose private credentials."],
+                    "choices": [GUARDRAIL_REFUSAL],
                 },
             }
         ],
     }
+    print("Galileo runtime-control API call")
+    print("  endpoint:     POST /v2/protect/invoke")
+    print("  stage_name:   devnet-lab-runtime-check")
+    print("  metric:       input_pii > 0.2")
+    print("  action:       OVERRIDE")
     try:
         result = client.post("/v2/protect/invoke", json=body)
     except GalileoApiError as exc:
@@ -563,7 +667,20 @@ def cmd_guardrail(args: argparse.Namespace) -> None:
         print(exc)
         raise SystemExit(1)
 
-    print(json.dumps(result, indent=2, sort_keys=True))
+    metric = (result.get("metric_results") or {}).get("input_pii") if isinstance(result, dict) else None
+    metric = metric or {}
+    print("")
+    print("Galileo response")
+    print(f"  status:       {result.get('status') if isinstance(result, dict) else 'unknown'}")
+    print(f"  metric:       input_pii")
+    print(f"  metric_state: {metric.get('status', 'unknown')}")
+    if metric.get("error_message"):
+        print(f"  note:         {metric['error_message']}")
+    print("")
+    print("What this means")
+    print("- The local policy above shows the application decision: the risky request is blocked and overridden.")
+    print("- The Galileo API call shows where a production runtime-control ruleset would be invoked.")
+    print("- This lab tenant reports that the input_pii metric is not enabled, so Galileo does not compute that metric here.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -573,6 +690,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("env").set_defaults(func=cmd_env)
     sub.add_parser("capabilities").set_defaults(func=cmd_capabilities)
     sub.add_parser("outcomes").set_defaults(func=cmd_outcomes)
+    sub.add_parser("trace-payload").set_defaults(func=cmd_trace_payload)
+    sub.add_parser("dataset-preview").set_defaults(func=cmd_dataset_preview)
     sub.add_parser("llm-check").set_defaults(func=cmd_llm_check)
     sub.add_parser("setup").set_defaults(func=cmd_setup)
     sub.add_parser("log-traces").set_defaults(func=cmd_log_traces)
