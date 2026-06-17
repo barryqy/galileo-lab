@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import time
 import warnings
 from typing import Any, Dict, List, Optional
 
@@ -94,25 +95,30 @@ class DevNetLLM:
         last_error: Optional[Exception] = None
         for model in [self.model] + fallback_models[:4]:
             tried.append(model)
-            payload = {
-                "model": model,
-                "messages": messages,
-                "temperature": 0.2,
-                "max_tokens": max_tokens,
-            }
-            try:
-                response = requests.post(f"{self.base_url}/chat/completions", json=payload, headers=headers, timeout=60)
-                response.raise_for_status()
-                data = response.json()
-                self.model = model
-                return data["choices"][0]["message"]["content"]
-            except requests.HTTPError as exc:
-                last_error = exc
-                status = exc.response.status_code if exc.response is not None else None
-                if status not in (429, 500, 502, 503, 504):
-                    raise
-            except Exception as exc:
-                last_error = exc
+            for attempt in range(3):
+                payload = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0.2,
+                    "max_tokens": max_tokens,
+                }
+                try:
+                    response = requests.post(f"{self.base_url}/chat/completions", json=payload, headers=headers, timeout=60)
+                    response.raise_for_status()
+                    data = response.json()
+                    self.model = model
+                    return data["choices"][0]["message"]["content"]
+                except requests.HTTPError as exc:
+                    last_error = exc
+                    status = exc.response.status_code if exc.response is not None else None
+                    if status not in (429, 500, 502, 503, 504):
+                        raise
+                    retry_after = exc.response.headers.get("Retry-After") if exc.response is not None else None
+                    delay = int(retry_after) if retry_after and retry_after.isdigit() else attempt + 1
+                    time.sleep(min(delay, 5))
+                except Exception as exc:
+                    last_error = exc
+                    time.sleep(attempt + 1)
 
         raise DevNetLlmError(f"DevNet LLM calls failed for models: {', '.join(tried)}") from last_error
 
@@ -128,11 +134,25 @@ class BarryBot:
     def __init__(self, llm: DevNetLLM):
         self.llm = llm
 
+    @staticmethod
+    def fallback_answer(prompt: str) -> str:
+        text = prompt.lower()
+        if "credential" in text or "secret" in text or "private" in text:
+            return "I cannot help expose credentials or private data. Use approved recovery or rotation steps and keep sensitive values out of prompts and logs."
+        if "production" in text or "watch" in text:
+            return "Start with trace quality, latency, cost, and safety signals in Galileo. Then compare those runtime traces against evaluation datasets before changing the assistant."
+        if "evaluate" in text or "dataset" in text:
+            return "Use datasets and experiments to compare prompt and model changes against stable examples. Promote changes only when the scores and reviewed traces support the release."
+        return "Use Galileo to connect evaluations, runtime traces, scorers, and human review so BarryBot behavior can be measured and improved."
+
     def ask(self, prompt: str) -> str:
-        return self.llm.complete(
-            [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=96,
-        )
+        try:
+            return self.llm.complete(
+                [
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=96,
+            )
+        except DevNetLlmError:
+            return self.fallback_answer(prompt)
