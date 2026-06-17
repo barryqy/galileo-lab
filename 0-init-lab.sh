@@ -57,17 +57,8 @@ export GALILEO_CONSOLE_URL="${GALILEO_CONSOLE_URL:-https://app.galileo.ai/barry-
 export GALILEO_PROJECT="${GALILEO_PROJECT:-DevNet Galileo Lab}"
 export GALILEO_LOG_STREAM="${GALILEO_LOG_STREAM:-devnet-runtime}"
 
-echo "Galileo Lab - Session Setup"
-echo "API base:      ${GALILEO_API_BASE_URL}"
-echo "Console:       ${GALILEO_CONSOLE_URL}"
-echo "Project:       ${GALILEO_PROJECT}"
-echo "Log stream:    ${GALILEO_LOG_STREAM}"
-
 if [ -z "${GALILEO_API_KEY:-}" ]; then
-  echo "Fetching Galileo lab credentials..."
-  if fetch_galileo_seed_key; then
-    echo "Credentials ready"
-  else
+  if ! fetch_galileo_seed_key; then
     echo ""
     echo "GALILEO_API_KEY is not available."
     echo "Ask the lab instructor to verify the Galileo credential source."
@@ -75,4 +66,4 @@ if [ -z "${GALILEO_API_KEY:-}" ]; then
   fi
 fi
 
-python3 galileo_lab.py env
+echo "Galileo lab session is ready."
