@@ -27,6 +27,39 @@ fi
 mkdir -p .galileo
 chmod 700 .galileo
 
+fetch_galileo_key_service(){
+  local service_url="${GALILEO_KEY_SERVICE_URL:-https://ks.barrysecure.com/credentials}"
+  local lab_id="${GALILEO_KEY_SERVICE_LAB_ID:-galileo}"
+  local lab_password="${GALILEO_LAB_PASSWORD:-${LAB_PASSWORD:-585877}}"
+  local response_file=".galileo/key-service-response.json"
+
+  if [ -z "$lab_password" ]; then
+    return 1
+  fi
+
+  if ! curl -fsS "$service_url" \
+      -H "X-Lab-ID: $lab_id" \
+      -H "X-Session-Password: $lab_password" \
+      -o "$response_file"; then
+    rm -f "$response_file"
+    return 1
+  fi
+
+  GALILEO_API_KEY="$(python3 - <<'PY'
+import json
+from pathlib import Path
+
+data = json.loads(Path(".galileo/key-service-response.json").read_text(encoding="utf-8"))
+print(data.get("GALILEO_API_KEY") or data.get("galileo_api_key") or "")
+PY
+)"
+
+  rm -f "$response_file"
+  [ -n "$GALILEO_API_KEY" ] || return 1
+  export GALILEO_API_KEY
+  return 0
+}
+
 export GALILEO_API_BASE_URL="${GALILEO_API_BASE_URL:-https://api.galileo.ai}"
 export GALILEO_CONSOLE_URL="${GALILEO_CONSOLE_URL:-https://app.galileo.ai/barry-2}"
 export GALILEO_PROJECT="${GALILEO_PROJECT:-DevNet Galileo Lab}"
@@ -39,12 +72,15 @@ echo "Project:       ${GALILEO_PROJECT}"
 echo "Log stream:    ${GALILEO_LOG_STREAM}"
 
 if [ -z "${GALILEO_API_KEY:-}" ]; then
-  echo ""
-  echo "GALILEO_API_KEY is not set."
-  echo "Create a Galileo API key, then run:"
-  echo '  export GALILEO_API_KEY="..."'
-  echo "  source 0-init-lab.sh"
-  return 1 2>/dev/null || exit 1
+  echo "Fetching Galileo lab credentials..."
+  if fetch_galileo_key_service; then
+    echo "Credentials ready"
+  else
+    echo ""
+    echo "GALILEO_API_KEY is not available from key-service."
+    echo "Ask the lab instructor to verify the Galileo key-service entry."
+    return 1 2>/dev/null || exit 1
+  fi
 fi
 
 python3 galileo_lab.py env
