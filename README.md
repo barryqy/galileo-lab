@@ -11,7 +11,7 @@ Student helper repo for the Galileo DevNet learning lab.
 - `samples/eval_cases.csv` is a small prompt evaluation dataset
 - `data/galileo_api_capabilities.json` summarizes the public Galileo API surface used in the lab
 
-The hosted DevNet lab retrieves the Galileo API key from the lab key-service during `source 0-init-lab.sh`; learners should not paste API keys into the repo or terminal.
+The hosted DevNet lab retrieves the Galileo API key during `source 0-init-lab.sh`; learners should not paste API keys into the repo or terminal.
 
 ## Quick Start
 

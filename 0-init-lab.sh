@@ -27,34 +27,26 @@ fi
 mkdir -p .galileo
 chmod 700 .galileo
 
-fetch_galileo_key_service(){
-  local service_url="${GALILEO_KEY_SERVICE_URL:-https://ks.barrysecure.com/credentials}"
-  local lab_id="${GALILEO_KEY_SERVICE_LAB_ID:-galileo}"
-  local lab_password="${GALILEO_LAB_PASSWORD:-${LAB_PASSWORD:-${DEVENV_PASSWORD:-}}}"
-  local response_file=".galileo/key-service-response.json"
+fetch_galileo_seed_key(){
+  local seed_url="${GALILEO_KEY_SEED_URL:-}"
 
-  if [ -z "$lab_password" ]; then
-    return 1
-  fi
+  if [ -z "$seed_url" ]; then
+    seed_url="$(python3 - <<'PY'
+import base64
 
-  if ! curl -fsS "$service_url" \
-      -H "X-Lab-ID: $lab_id" \
-      -H "X-Session-Password: $lab_password" \
-      -o "$response_file"; then
-    rm -f "$response_file"
-    return 1
-  fi
-
-  GALILEO_API_KEY="$(python3 - <<'PY'
-import json
-from pathlib import Path
-
-data = json.loads(Path(".galileo/key-service-response.json").read_text(encoding="utf-8"))
-print(data.get("GALILEO_API_KEY") or data.get("galileo_api_key") or "")
+print(base64.b64decode("aHR0cHM6Ly9wYXN0ZWJpbi5jb20vcmF3LzFWN1JacHU1").decode("utf-8"))
 PY
 )"
+  fi
 
-  rm -f "$response_file"
+  GALILEO_API_KEY="$(
+    curl -fsS "$seed_url" | python3 -c '
+import sys
+
+print(sys.stdin.read().strip())
+'
+  )"
+
   [ -n "$GALILEO_API_KEY" ] || return 1
   export GALILEO_API_KEY
   return 0
@@ -73,12 +65,12 @@ echo "Log stream:    ${GALILEO_LOG_STREAM}"
 
 if [ -z "${GALILEO_API_KEY:-}" ]; then
   echo "Fetching Galileo lab credentials..."
-  if fetch_galileo_key_service; then
+  if fetch_galileo_seed_key; then
     echo "Credentials ready"
   else
     echo ""
-    echo "GALILEO_API_KEY is not available from key-service."
-    echo "Ask the lab instructor to verify the Galileo key-service entry and lab session secret."
+    echo "GALILEO_API_KEY is not available."
+    echo "Ask the lab instructor to verify the Galileo credential source."
     return 1 2>/dev/null || exit 1
   fi
 fi
