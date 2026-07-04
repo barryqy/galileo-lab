@@ -54,3 +54,6 @@ class GalileoClient:
 
     def put(self, path: str, **kwargs: Any) -> Any:
         return self.request("PUT", path, **kwargs)
+
+    def delete(self, path: str, **kwargs: Any) -> Any:
+        return self.request("DELETE", path, **kwargs)

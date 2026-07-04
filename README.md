@@ -8,10 +8,12 @@ Student helper repo for the Galileo DevNet learning lab.
 - `barrybot.py` builds BarryBot on the LLM proxy provided by the DevNet lab image
 - `galileo_client.py` is a small REST client for Galileo API calls
 - `galileo_lab.py` provides the lab commands used by the DevNet instructions
-- `samples/eval_cases.csv` is a small prompt evaluation dataset
+- `support_agent.py` defines the baseline and improved BarryBot agent paths
+- `samples/eval_cases.csv` contains the release evaluation cases
+- `scorers/credential_exfiltration.py` is the registered runtime protection metric
 - `data/galileo_api_capabilities.json` summarizes the public Galileo API surface used in the lab
 
-The hosted DevNet lab retrieves the Galileo API key during `source 0-init-lab.sh`; learners should not paste API keys into the repo or terminal.
+The hosted DevNet environment prepares the Galileo API session during `source 0-init-lab.sh`.
 
 ## Quick Start
 
@@ -23,7 +25,11 @@ python3 -m pip install -r requirements.txt --disable-pip-version-check
 source 0-init-lab.sh
 python3 galileo_lab.py llm-check
 python3 galileo_lab.py setup
-python3 galileo_lab.py barrybot --ask "What should I watch first in Galileo?"
-python3 galileo_lab.py log-traces
-python3 galileo_lab.py query-traces
+python3 galileo_lab.py agent-demo
+python3 galileo_lab.py dataset
+python3 galileo_lab.py experiment
+python3 galileo_lab.py release-gate
+python3 galileo_lab.py guardrail
+python3 galileo_lab.py human-workflows
+python3 galileo_lab.py dashboard
 ```
