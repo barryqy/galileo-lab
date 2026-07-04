@@ -486,7 +486,8 @@ def cmd_dataset(args: argparse.Namespace) -> None:
             "dataset_name": first_name(existing),
             "dataset_version": existing.get("current_version_index", 1),
         })
-        print(f"Dataset already exists: {first_name(existing)} ({dataset_id})")
+        print(f"Dataset ready: {first_name(existing)} ({dataset_id})")
+        print(f"  rows: {existing.get('num_rows', 'unknown')}")
         return
 
     with DATASET_FILE.open("rb") as handle:
@@ -505,7 +506,8 @@ def cmd_dataset(args: argparse.Namespace) -> None:
         "dataset_name": first_name(result),
         "dataset_version": result.get("current_version_index", 1),
     })
-    print(f"Dataset uploaded: {first_name(result)} ({dataset_id})")
+    print(f"Dataset ready: {first_name(result)} ({dataset_id})")
+    print(f"  rows: {result.get('num_rows', 'unknown')}")
 
 
 def cmd_experiment(args: argparse.Namespace) -> None:
@@ -848,7 +850,6 @@ def cmd_dashboard(_: argparse.Namespace) -> None:
         ("Tool selection quality", "tool_selection_quality", "Average"),
         ("Tool errors", "tool_errors", "Sum"),
     ]
-    created = 0
     for name, metric, aggregation in desired:
         if name.lower() in existing_names:
             continue
@@ -860,14 +861,16 @@ def cmd_dashboard(_: argparse.Namespace) -> None:
             "aggregation": aggregation,
             "section_id": section_id,
         })
-        created += 1
     latest = client.get(base)
     total_widgets = len(latest.get("widgets") or [])
+    release_widgets = 0
     for item in latest.get("sections") or []:
         total_widgets += len(item.get("widgets") or [])
+        if first_name(item).lower() == "barrybot release readiness":
+            release_widgets = len(item.get("widgets") or [])
     print("BarryBot dashboard configured in Galileo")
     print(f"  section:       {first_name(section)}")
-    print(f"  widgets added: {created}")
+    print(f"  release widgets: {release_widgets}")
     print(f"  total widgets: {total_widgets}")
 
 
