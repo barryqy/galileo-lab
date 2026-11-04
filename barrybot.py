@@ -133,6 +133,8 @@ class BarryBot:
 
     def __init__(self, llm: DevNetLLM):
         self.llm = llm
+        self.last_messages: List[Dict[str, str]] = []
+        self.last_response_metadata: Dict[str, Any] = {}
 
     @staticmethod
     def fallback_answer(prompt: str) -> str:
@@ -145,14 +147,34 @@ class BarryBot:
             return "Use datasets and experiments to compare prompt and model changes against stable examples. Promote changes only when the scores and reviewed traces support the release."
         return "Use Galileo to connect evaluations, runtime traces, scorers, and human review so BarryBot behavior can be measured and improved."
 
-    def ask(self, prompt: str) -> str:
+    def ask(self, prompt: str, *, allow_fallback: bool = True) -> str:
+        self.last_messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        self.last_response_metadata = {
+            "response_source": "unavailable",
+            "used_fallback": False,
+            "model": None,
+            "model_source": None,
+        }
         try:
-            return self.llm.complete(
-                [
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=96,
-            )
+            answer = self.llm.complete(self.last_messages, max_tokens=96)
+            if not isinstance(answer, str) or not answer.strip():
+                raise DevNetLlmError("DevNet LLM returned an empty response")
         except DevNetLlmError:
+            if not allow_fallback:
+                raise
+            self.last_response_metadata.update({
+                "response_source": "fallback",
+                "used_fallback": True,
+                "model_source": "local-fallback",
+            })
             return self.fallback_answer(prompt)
+
+        self.last_response_metadata.update({
+            "response_source": "llm",
+            "model": self.llm.model,
+            "model_source": self.llm.model_source,
+        })
+        return answer

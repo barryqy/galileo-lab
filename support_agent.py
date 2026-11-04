@@ -96,21 +96,35 @@ def _tool_path(variant: str, case_id: str) -> List[Dict[str, Any]]:
     return [lookup, policy, action]
 
 
-def _scores(variant: str, case_id: str) -> Dict[str, float]:
-    if variant == "candidate":
-        return {
-            "action_completion": 1.0,
-            "policy_compliance": 1.0,
-            "tool_selection_quality": 1.0,
-            "tool_errors": 0.0,
-        }
+def _scores(tools: List[Dict[str, Any]], case_id: str) -> Dict[str, float]:
+    expected_actions = {
+        "refund-auth": ("escalate_case", "queued"),
+        "refund-window": ("escalate_case", "queued"),
+        "refund-valid": ("issue_refund", "approved"),
+        "order-missing": ("request_order_verification", "awaiting_customer"),
+    }
+    if case_id not in expected_actions:
+        raise ValueError(f"Unknown support case: {case_id}")
 
-    action_completion = 1.0 if case_id == "refund-valid" else 0.0
+    action_name, outcome = expected_actions[case_id]
+    names = [tool["name"] for tool in tools]
+    action = tools[-1] if tools else {}
+    correct_action = action.get("name") == action_name
+    completed = (
+        correct_action
+        and 200 <= action.get("status_code", 0) < 300
+        and action.get("output", {}).get("status") == outcome
+    )
+    policy_checked = (
+        names[:2] == ["lookup_order", "check_refund_policy"]
+        and all(200 <= tool.get("status_code", 0) < 300 for tool in tools[:2])
+    )
+    authorized = action_name != "issue_refund" or action.get("input", {}).get("authorization_checked") is True
     return {
-        "action_completion": action_completion,
-        "policy_compliance": 0.0,
-        "tool_selection_quality": 0.0,
-        "tool_errors": 1.0,
+        "action_completion": float(completed),
+        "policy_compliance": float(correct_action and policy_checked and authorized),
+        "tool_selection_quality": float(names == ["lookup_order", "check_refund_policy", action_name]),
+        "tool_errors": float(sum(not 200 <= tool.get("status_code", 0) < 300 for tool in tools)),
     }
 
 
@@ -126,12 +140,22 @@ def run_case(variant: str, case: Dict[str, str], llm: Optional[DevNetLLM] = None
         output = case["expected"]
 
     model_output = output
+    summary_messages = []
+    response_metadata = {
+        "response_source": "deterministic",
+        "used_fallback": False,
+        "model": None,
+        "model_source": "scenario",
+    }
     if llm:
         prompt = (
             "You are BarryBot, a customer support agent. Summarize the result in one sentence. "
             f"Customer request: {case['input']} Tool results: {json.dumps(tools)}"
         )
-        model_output = BarryBot(llm).ask(prompt)
+        bot = BarryBot(llm)
+        model_output = bot.ask(prompt)
+        summary_messages = bot.last_messages
+        response_metadata = dict(bot.last_response_metadata)
 
     return {
         "variant": variant,
@@ -140,7 +164,9 @@ def run_case(variant: str, case: Dict[str, str], llm: Optional[DevNetLLM] = None
         "tool_names": tool_names,
         "output": output,
         "model_output": model_output,
-        "metrics": _scores(variant, case["case_id"]),
+        "summary_messages": summary_messages,
+        "response_metadata": response_metadata,
+        "metrics": _scores(tools, case["case_id"]),
     }
 
 
@@ -168,6 +194,7 @@ def build_agent_trace(run: Dict[str, Any], llm: DevNetLLM) -> Dict[str, Any]:
     created = utc_now()
     spans = []
     agent_id = str(uuid.uuid4())
+    response_metadata = run["response_metadata"]
     spans.append({
         "id": agent_id,
         "trace_id": trace_id,
@@ -178,30 +205,15 @@ def build_agent_trace(run: Dict[str, Any], llm: DevNetLLM) -> Dict[str, Any]:
         "output": run["output"],
         "step_number": 0,
         "tags": ["barrybot", run["variant"]],
-        "user_metadata": {"version": run["variant"]},
+        "user_metadata": {"version": run["variant"], "tool_execution": "simulated"},
         "metrics": {},
     })
-    spans.append({
-        "id": str(uuid.uuid4()),
-        "trace_id": trace_id,
-        "parent_id": agent_id,
-        "name": "plan-next-action",
-        "type": "llm",
-        "created_at": created,
-        "input": [{"role": "user", "content": run["case"]["input"]}],
-        "output": {"role": "assistant", "content": run["model_output"]},
-        "model": llm.model,
-        "step_number": 1,
-        "tags": ["devnet-image-model"],
-        "user_metadata": {"model_source": llm.model_source},
-        "metrics": {},
-    })
-    for index, tool in enumerate(run["tools"], 2):
+    for index, tool in enumerate(run["tools"], 1):
         span_type = tool.get("type", "tool")
         output: Any = json.dumps(tool["output"])
         if span_type == "retriever":
             output = [{
-                "content": "Refunds require authentication and are limited to 30 days after delivery.",
+                "page_content": "Refunds require authentication and are limited to 30 days after delivery.",
                 "metadata": {"source": "refund-policy-v3"},
             }]
         spans.append({
@@ -216,9 +228,28 @@ def build_agent_trace(run: Dict[str, Any], llm: DevNetLLM) -> Dict[str, Any]:
             "status_code": tool["status_code"],
             "step_number": index,
             "tags": [run["variant"]],
-            "user_metadata": {"version": run["variant"]},
+            "user_metadata": {"version": run["variant"], "tool_execution": "simulated"},
             "metrics": {},
         })
+
+    live_response = response_metadata["response_source"] == "llm"
+    summary = {
+        "id": str(uuid.uuid4()),
+        "trace_id": trace_id,
+        "parent_id": agent_id,
+        "name": "summarize-tool-results" if live_response else "fallback-summary",
+        "type": "llm" if live_response else "tool",
+        "created_at": created,
+        "input": run["summary_messages"] if live_response else json.dumps(run["summary_messages"]),
+        "output": {"role": "assistant", "content": run["model_output"]} if live_response else run["model_output"],
+        "step_number": len(run["tools"]) + 1,
+        "tags": ["devnet-image-model"] if live_response else [response_metadata["response_source"]],
+        "user_metadata": dict(response_metadata),
+        "metrics": {},
+    }
+    if live_response:
+        summary["model"] = response_metadata["model"]
+    spans.append(summary)
 
     return {
         "id": trace_id,
@@ -238,8 +269,11 @@ def build_agent_trace(run: Dict[str, Any], llm: DevNetLLM) -> Dict[str, Any]:
         "user_metadata": {
             "application": "BarryBot",
             "version": run["variant"],
-            "llm_source": "devnet-image",
-            "llm_model": llm.model,
+            "tool_execution": "simulated",
+            "response_source": response_metadata["response_source"],
+            "used_fallback": response_metadata["used_fallback"],
+            "llm_source": "devnet-image" if live_response else response_metadata["model_source"],
+            "llm_model": response_metadata["model"] or "none",
         },
         "metrics": run["metrics"],
         "spans": spans,
@@ -263,7 +297,12 @@ def build_evaluation_trace(run: Dict[str, Any]) -> Dict[str, Any]:
             "variant": run["variant"],
         },
         "tags": ["devnet", "evaluation", run["variant"]],
-        "user_metadata": {"application": "BarryBot", "version": run["variant"]},
+        "user_metadata": {
+            "application": "BarryBot",
+            "version": run["variant"],
+            "tool_execution": "simulated",
+            "response_source": "deterministic",
+        },
         "metrics": run["metrics"],
         "spans": [],
     }

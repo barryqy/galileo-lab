@@ -53,10 +53,11 @@
       "endpoints": ["GET /v2/projects/{project_id}/log_streams/{log_stream_id}/trends", "POST /v2/projects/{project_id}/log_streams/{log_stream_id}/trends/widgets", "POST /v2/projects/{project_id}/log_streams/{log_stream_id}/trends/sections"]
     },
     {
-      "name": "Agent Control and runtime guardrails",
-      "summary": "Invoke runtime checks using staged rulesets; current docs point new work to Agent Control while the legacy Protect endpoint remains available.",
-      "endpoints": ["POST /v2/protect/invoke"]
+      "name": "Agent Control runtime policies",
+      "summary": "Evaluate a local SDK policy before a protected function runs; log its decisions separately to Galileo.",
+      "endpoints": [],
+      "sdk": "agent_control.evaluation.check_evaluation_with_local",
+      "source": "https://github.com/agentcontrol/agent-control/blob/ae28f1d0c21ea2caf002718647cad04b5e0f07a8/sdks/python/src/agent_control/evaluation.py#L312"
     }
   ]
 }
-

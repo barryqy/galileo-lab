@@ -9,6 +9,10 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$THIS_FILE")" && pwd)"
 cd "$SCRIPT_DIR" || return 1
 
+if [ -f .venv/bin/activate ]; then
+  source .venv/bin/activate
+fi
+
 if [ -f .env ]; then
   while IFS= read -r line; do
     case "$line" in
