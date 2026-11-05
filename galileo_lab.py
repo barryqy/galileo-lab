@@ -29,7 +29,7 @@ from support_agent import (
 )
 
 
-STATE_DIR = Path(".galileo")
+STATE_DIR = Path(os.environ.get('GALILEO_STATE_DIR', '.galileo'))
 STATE_FILE = STATE_DIR / "state.json"
 CAPABILITY_FILE = Path("data/galileo_api_capabilities.json")
 DATASET_FILE = Path("samples/eval_cases.csv")
@@ -82,7 +82,7 @@ def load_state() -> Dict[str, Any]:
 
 
 def save_state(values: Dict[str, Any]) -> None:
-    STATE_DIR.mkdir(exist_ok=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
     STATE_DIR.chmod(0o700)
     current = load_state()
     current.update(values)
@@ -281,11 +281,29 @@ def create_or_get_log_stream(client: GalileoClient, project_id: str, name: str) 
 
 def ensure_project_and_stream(client: GalileoClient) -> Dict[str, str]:
     state = load_state()
-    if state.get("project_id") and state.get("log_stream_id"):
-        return {"project_id": state["project_id"], "log_stream_id": state["log_stream_id"]}
-
     project_name = os.environ.get("GALILEO_PROJECT", "DevNet Galileo Lab")
     stream_name = os.environ.get("GALILEO_LOG_STREAM", "devnet-runtime")
+    project_id = os.environ.get('GALILEO_PROJECT_ID')
+    log_stream_id = os.environ.get('GALILEO_LOG_STREAM_ID')
+    if bool(project_id) != bool(log_stream_id):
+        raise RuntimeError('Both Galileo project and log stream IDs must be configured together')
+    if project_id:
+        project_id = str(uuid.UUID(project_id))
+        log_stream_id = str(uuid.UUID(log_stream_id))
+        project = client.get(f'/v2/projects/{project_id}')
+        if project.get('name') != project_name:
+            raise RuntimeError('Configured Galileo project ID does not match the lab project name')
+        stream = client.get(f'/v2/projects/{project_id}/log_streams/{log_stream_id}')
+        if stream.get('name') != stream_name or stream.get('project_id') not in (None, project_id):
+            raise RuntimeError('Configured Galileo log stream does not match the lab destination')
+        save_state({'project_id': project_id, 'log_stream_id': log_stream_id,
+            'project_name': project_name, 'log_stream_name': stream_name, 'api_base_url': client.base_url})
+        return {'project_id': project_id, 'log_stream_id': log_stream_id}
+    if (state.get('api_base_url') == client.base_url and state.get('project_name') == project_name
+            and state.get('log_stream_name') == stream_name
+            and state.get('project_id') and state.get('log_stream_id')):
+        return {'project_id': state['project_id'], 'log_stream_id': state['log_stream_id']}
+
     project = create_or_get_project(client, project_name)
     project_id = first_id(project)
     if not project_id:
@@ -297,6 +315,7 @@ def ensure_project_and_stream(client: GalileoClient) -> Dict[str, str]:
         raise RuntimeError(f"Could not determine log stream id from response: {stream}")
 
     save_state({
+        "api_base_url": client.base_url,
         "project_id": project_id,
         "project_name": first_name(project),
         "log_stream_id": log_stream_id,
@@ -898,6 +917,44 @@ def cmd_guardrail(args: argparse.Namespace) -> None:
     print("Logged both policy decisions in Galileo.")
 
 
+def cmd_agent_name(_: argparse.Namespace) -> None:
+    from observability_tests import get_agent_name
+    print(f"Your agent: {get_agent_name(STATE_DIR)}")
+
+
+def cmd_run_tests(args: argparse.Namespace) -> None:
+    from observability_tests import print_findings, print_ui, run_suite
+    client = client_or_exit()
+    ids = ensure_project_and_stream(client)
+    llm = DevNetLLM.from_env()
+    report = run_suite(client, ids, llm, args.suite, state_dir=STATE_DIR,
+        console_url=os.environ.get('GALILEO_CONSOLE_URL', 'https://app.galileo.ai/barry-2'))
+    print_findings(report)
+    print_ui(report)
+    if not report['api_verified']:
+        raise RuntimeError('Galileo is still indexing this run. Click the findings action again to retry the API read.')
+    if report['totals']['completed_cases'] != len(report['cases']):
+        raise RuntimeError('Some model tests failed. Review their API findings before rerunning the tests.')
+
+
+def cmd_findings(args: argparse.Namespace) -> None:
+    from observability_tests import print_findings, report_findings
+    report = report_findings(client_or_exit(), state_dir=STATE_DIR, run_id=args.run)
+    print_findings(report)
+    if not report['api_verified']:
+        raise RuntimeError('Some traces are still indexing. Retry findings without rerunning the model tests.')
+
+
+def cmd_compare_tests(_: argparse.Namespace) -> None:
+    from observability_tests import compare_runs
+    compare_runs(client_or_exit(), state_dir=STATE_DIR)
+
+
+def cmd_open_ui(args: argparse.Namespace) -> None:
+    from observability_tests import print_ui, report_findings
+    print_ui(report_findings(client_or_exit(), state_dir=STATE_DIR, run_id=args.run))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Galileo DevNet lab helper")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -912,6 +969,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("log-traces").set_defaults(func=cmd_log_traces)
     sub.add_parser("query-traces").set_defaults(func=cmd_query_traces)
     sub.add_parser("agent-demo").set_defaults(func=cmd_agent_demo)
+    sub.add_parser('agent-name').set_defaults(func=cmd_agent_name)
+    test_run = sub.add_parser('run-tests')
+    test_run.add_argument('--suite', choices=('baseline', 'efficient', 'privacy'), default='baseline')
+    test_run.set_defaults(func=cmd_run_tests)
+    for command, handler in (('findings', cmd_findings), ('open-ui', cmd_open_ui)):
+        action = sub.add_parser(command)
+        action.add_argument('--run')
+        action.set_defaults(func=handler)
+    sub.add_parser('compare-tests').set_defaults(func=cmd_compare_tests)
 
     barrybot = sub.add_parser("barrybot")
     barrybot.add_argument("--ask", default="What should I watch first in Galileo for a production AI assistant?")

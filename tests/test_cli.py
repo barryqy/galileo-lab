@@ -1,6 +1,11 @@
 import argparse
 import contextlib
 import io
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +24,49 @@ class BrokenLLM:
 
 
 class CliTests(unittest.TestCase):
+    def test_agent_name_is_a_public_command_that_needs_no_credentials_or_api(self):
+        parser = galileo_lab.build_parser()
+        commands = parser._subparsers._group_actions[0].choices
+        self.assertIn("agent-name", commands, "The public agent-name command is missing")
+        args = parser.parse_args(["agent-name"])
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            with patch.object(galileo_lab, "STATE_DIR", Path(directory)):
+                with patch.object(galileo_lab, "client_or_exit", side_effect=AssertionError("No API needed")):
+                    with patch.object(galileo_lab, "load_local_env", side_effect=AssertionError("No credential loading needed")):
+                        with contextlib.redirect_stdout(output):
+                            args.func(args)
+            name = galileo_lab.json.loads(Path(directory, "agent.json").read_text())["agent_name"]
+            self.assertEqual(output.getvalue().strip(), f"Your agent: {name}")
+            env = {"PATH": os.environ["PATH"], "GALILEO_STATE_DIR": directory}
+            result = subprocess.run([sys.executable, "-B", "galileo_lab.py", "agent-name"],
+                env=env, capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.strip(), f"Your agent: {name}")
+
+    def test_destination_change_cannot_reuse_cached_workspace_ids(self):
+        client = MagicMock(base_url='https://api.multitenant.galileocloud.io')
+        cached = {'project_id': 'old-project', 'log_stream_id': 'old-stream',
+            'api_base_url': 'https://api.galileo.ai', 'project_name': 'DevNet Galileo Lab',
+            'log_stream_name': 'devnet-runtime'}
+        env = {'GALILEO_PROJECT': 'AI Observability Lab', 'GALILEO_LOG_STREAM': 'ai-observability-lab'}
+        with patch.dict(os.environ, env, clear=True), patch.object(galileo_lab, 'load_state', return_value=cached):
+            with patch.object(galileo_lab, 'create_or_get_project', return_value={'id': 'new-project', 'name': env['GALILEO_PROJECT']}):
+                with patch.object(galileo_lab, 'create_or_get_log_stream', return_value={'id': 'new-stream', 'name': env['GALILEO_LOG_STREAM']}):
+                    with patch.object(galileo_lab, 'save_state'):
+                        ids = galileo_lab.ensure_project_and_stream(client)
+        self.assertEqual(ids, {'project_id': 'new-project', 'log_stream_id': 'new-stream'})
+
+    def test_explicit_workspace_must_match_the_configured_names(self):
+        client = MagicMock(base_url='https://api.multitenant.galileocloud.io')
+        client.get.return_value = {'id': '59f3d09d-c104-4f40-a3b8-77af51ea55d1', 'name': 'Unrelated project'}
+        env = {'GALILEO_PROJECT': 'AI Observability Lab', 'GALILEO_LOG_STREAM': 'ai-observability-lab',
+            'GALILEO_PROJECT_ID': '59f3d09d-c104-4f40-a3b8-77af51ea55d1',
+            'GALILEO_LOG_STREAM_ID': '3d95e2c0-38cd-4c1a-bdd8-7a259de8a33b'}
+        with patch.dict(os.environ, env, clear=True), patch.object(galileo_lab, 'load_state', return_value={}):
+            with self.assertRaisesRegex(RuntimeError, 'project'):
+                galileo_lab.ensure_project_and_stream(client)
+        client.post.assert_not_called()
+
     def test_dataset_upload_maps_columns_and_verifies_the_stored_cases(self):
         client = MagicMock()
         client.post.return_value = {"id": "dataset", "name": "Cases", "num_rows": 4}

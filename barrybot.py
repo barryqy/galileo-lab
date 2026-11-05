@@ -3,6 +3,7 @@
 import os
 import time
 import warnings
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL.*")
@@ -58,6 +59,7 @@ class DevNetLLM:
         self.model = model
         self.model_source = model_source
         self.models = models
+        self.last_completion_metadata: Dict[str, Any] = {}
 
     @classmethod
     def from_env(cls) -> "DevNetLLM":
@@ -87,6 +89,9 @@ class DevNetLLM:
         return cls(base_url, api_key, model, source, models)
 
     def complete(self, messages: List[Dict[str, str]], *, max_tokens: int = 220) -> str:
+        self.last_completion_metadata = {}
+        call_started = time.perf_counter_ns()
+        request_count = 0
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         tried: List[str] = []
         fallback_models = [model for model in PREFERRED_DEVNET_MODELS if model in self.models and model != self.model]
@@ -103,11 +108,33 @@ class DevNetLLM:
                     "max_tokens": max_tokens,
                 }
                 try:
+                    created_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                    attempt_started = time.perf_counter_ns()
+                    request_count += 1
                     response = requests.post(f"{self.base_url}/chat/completions", json=payload, headers=headers, timeout=60)
                     response.raise_for_status()
                     data = response.json()
+                    answer = data["choices"][0]["message"]["content"]
+                    if not isinstance(answer, str) or not answer.strip():
+                        raise DevNetLlmError('DevNet LLM returned an empty response')
+                    duration_ns = time.perf_counter_ns() - attempt_started
+                    served_model = data.get('model') if isinstance(data.get('model'), str) and data['model'] else model
                     self.model = model
-                    return data["choices"][0]["message"]["content"]
+                    metadata = {'created_at': created_at, 'model': served_model, 'requested_model': model,
+                        'duration_ns': duration_ns, 'total_duration_ns': time.perf_counter_ns() - call_started,
+                        'request_count': request_count}
+                    finish_reason = data['choices'][0].get('finish_reason')
+                    if isinstance(finish_reason, str):
+                        metadata['finish_reason'] = finish_reason
+                    usage = data.get('usage') or {}
+                    if isinstance(usage, dict):
+                        for source, target in (('prompt_tokens', 'num_input_tokens'),
+                                ('completion_tokens', 'num_output_tokens'), ('total_tokens', 'num_total_tokens')):
+                            count = usage.get(source)
+                            if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+                                metadata[target] = count
+                    self.last_completion_metadata = metadata
+                    return answer
                 except requests.HTTPError as exc:
                     last_error = exc
                     status = exc.response.status_code if exc.response is not None else None
@@ -177,4 +204,7 @@ class BarryBot:
             "model": self.llm.model,
             "model_source": self.llm.model_source,
         })
+        completion = getattr(self.llm, 'last_completion_metadata', None)
+        if isinstance(completion, dict):
+            self.last_response_metadata.update(completion)
         return answer
