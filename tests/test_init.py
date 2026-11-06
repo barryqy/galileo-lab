@@ -6,10 +6,25 @@ import unittest
 
 
 class InitTests(unittest.TestCase):
-    def run_init(self, profile, credential=True, extra_env=None, *, shell='bash', env_text=None):
+    def run_init(self, profile, credential=True, extra_env=None, *, shell='bash', env_text=None, fixture_session=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             root.joinpath('0-init-lab.sh').write_text(Path('0-init-lab.sh').read_text())
+            root.joinpath('galileo_session.py').write_text(Path('galileo_session.py').read_text())
+            root.joinpath('.venv').symlink_to(Path('.venv').resolve(), target_is_directory=True)
+            if fixture_session:
+                root.joinpath('sitecustomize.py').write_text(
+                    'import requests\nfrom datetime import datetime, timedelta, timezone\n'
+                    'class FixtureResponse:\n'
+                    '    status_code = 200\n'
+                    '    def json(self):\n'
+                    '        return {"token": "provided by fixture service", '
+                    '"base_url": "https://devnet.cisco.com/v1/devenv-community/galileo/proxy", '
+                    '"expires_at": (datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(), '
+                    '"project_id": "2e652072-412e-4bef-97a5-1a8f4dc5b68e", '
+                    '"log_stream_id": "9ac1ae85-1c47-4447-8050-df5fbb5b2ae6", '
+                    '"environment_id": "fixture-environment"}\n'
+                    'requests.post = lambda *args, **kwargs: FixtureResponse()\n')
             if env_text is not None:
                 root.joinpath('.env').write_text(env_text)
             root.joinpath('curl').write_text(
@@ -21,7 +36,7 @@ class InitTests(unittest.TestCase):
                 '  exit 99\n'
                 'fi\n')
             root.joinpath('curl').chmod(0o700)
-            env = {'PATH': directory + ':' + os.environ['PATH']}
+            env = {'PATH': directory + ':' + os.environ['PATH'], 'PYTHONPATH': directory}
             if credential:
                 env['GALILEO_API_KEY'] = 'provided by runtime'
             if extra_env:
@@ -175,6 +190,49 @@ class InitTests(unittest.TestCase):
         self.assertIn('|.galileo/workshop|', result.stdout)
         self.assertNotIn('unexpected-key-fetch', result.stderr)
         self.assertNotIn('workshop-fixture-key', result.stdout)
+
+    def test_clean_workshop_automatically_bootstraps_without_a_native_key(self):
+        env = {'HOSTNAME': 'devpod-fixture-environment', 'DEVENV_USER': 'fixture user',
+            'DEVENV_PASSWORD': 'provided by fixture environment',
+            'LLM_BASE_URL': 'https://devnet.cisco.com/v1/llm'}
+        for shell in ('bash', 'zsh'):
+            with self.subTest(shell=shell):
+                result = self.run_init('workshop && test -z "$GALILEO_API_KEY" '
+                    '&& test -n "$GALILEO_LAB_SESSION_TOKEN" '
+                    '&& test "$GALILEO_LAB_PROFILE" = workshop', credential=False,
+                    extra_env=env, shell=shell, fixture_session=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('https://devnet.cisco.com/v1/devenv-community/galileo/proxy|', result.stdout)
+                self.assertNotIn('provided by fixture', result.stdout + result.stderr)
+                self.assertNotIn('unexpected-key-fetch', result.stderr)
+
+    def test_session_fields_are_cleared_when_switching_to_a_native_profile(self):
+        env = {'HOSTNAME': 'devpod-fixture-environment', 'DEVENV_USER': 'fixture user',
+            'DEVENV_PASSWORD': 'provided by fixture environment',
+            'LLM_BASE_URL': 'https://devnet.cisco.com/v1/llm'}
+        for shell in ('bash', 'zsh'):
+            for ending in ('observability', ''):
+                with self.subTest(shell=shell, ending=ending):
+                    result = self.run_init('workshop && export GALILEO_API_KEY="provided by native runtime" '
+                        '&& source ./0-init-lab.sh ' + ending + ' && test -z "$GALILEO_LAB_SESSION_TOKEN" '
+                        '&& test -z "$GALILEO_LAB_GATEWAY_URL"', credential=False,
+                        extra_env=env, shell=shell, fixture_session=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotIn('/galileo/proxy', result.stdout)
+
+    def test_native_key_and_workshop_seed_precede_automatic_session_bootstrap(self):
+        env = {'GALILEO_LAB_BOOTSTRAP_URL': 'https://foreign.invalid/sessions'}
+        for shell in ('bash', 'zsh'):
+            for credential in (True, False):
+                settings = dict(env)
+                if not credential:
+                    settings['GALILEO_WORKSHOP_KEY_SEED_URL'] = 'https://workshop-seed.invalid/fixture'
+                with self.subTest(shell=shell, credential=credential):
+                    result = self.run_init('workshop && test -z "$GALILEO_LAB_SESSION_TOKEN"',
+                        credential=credential, extra_env=settings, shell=shell)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('https://api.multitenant.galileocloud.io|', result.stdout)
+
 
 
 if __name__ == '__main__':

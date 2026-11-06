@@ -355,6 +355,42 @@ class ObservabilityTests(unittest.TestCase):
         self.assertIsNone(fresh["totals"]["input_tokens"])
         self.assertLessEqual(self.client.reads.count(second), 6)
 
+    def test_native_saved_run_stays_native_and_is_readable_with_native_override(self):
+        from galileo_client import GalileoClient
+        from test_galileo_client import session_environment
+        self.client.base_url = 'https://api.multitenant.galileocloud.io'
+        report = self.run_suite()
+        path = self.state_dir / 'runs' / (report['run_id'] + '.json')
+        original = path.read_bytes()
+        with patch.dict('os.environ', session_environment(), clear=True):
+            gateway = GalileoClient()
+            with self.assertRaisesRegex(ValueError, 'destination'):
+                workflow.report_findings(gateway, state_dir=self.state_dir)
+            native = GalileoClient(api_key='provided by native runtime')
+            with patch.object(native, 'get', side_effect=self.client.get):
+                findings = workflow.report_findings(native, state_dir=self.state_dir)
+        self.assertTrue(findings['api_verified'])
+        self.assertEqual(findings['destination']['api_base_url'], self.client.base_url)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_gateway_saved_run_keeps_its_stable_base_and_rejects_a_native_client(self):
+        from galileo_client import GalileoClient
+        from test_galileo_client import session_environment
+        env = session_environment()
+        self.client.base_url = env['GALILEO_LAB_GATEWAY_URL']
+        report = self.run_suite()
+        path = self.state_dir / 'runs' / (report['run_id'] + '.json')
+        original = path.read_bytes()
+        self.assertEqual(json.loads(original)['destination']['api_base_url'], self.client.base_url)
+        with patch.dict('os.environ', env, clear=True):
+            gateway = GalileoClient()
+            with patch.object(gateway, 'get', side_effect=self.client.get):
+                self.assertTrue(workflow.report_findings(gateway, state_dir=self.state_dir)['api_verified'])
+            native = GalileoClient(api_key='provided by native runtime')
+            with self.assertRaisesRegex(ValueError, 'destination'):
+                workflow.report_findings(native, state_dir=self.state_dir)
+        self.assertEqual(path.read_bytes(), original)
+
     def test_destination_and_run_metadata_mismatches_are_rejected(self):
         report = self.run_suite()
         self.client.base_url = "https://other.example.test"

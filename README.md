@@ -59,13 +59,18 @@ The guide uses `source 0-init-lab.sh workshop` for the Workshop destination:
 
 | Setting | Destination |
 | --- | --- |
-| API | `https://api.multitenant.galileocloud.io` |
+| Galileo API | `https://api.multitenant.galileocloud.io` |
+| Workshop session API | Selected automatically from the DevNet environment |
 | Console | `https://console.multitenant.galileocloud.io/workshop` |
 | Project | **AI Observability Lab**, `2e652072-412e-4bef-97a5-1a8f4dc5b68e` |
 | Stream | **ai-observability-lab**, `9ac1ae85-1c47-4447-8050-df5fbb5b2ae6` |
 | Local state | `.galileo/workshop` |
 
-Provision a Workshop credential as a preloaded `GALILEO_API_KEY` or through an instructor-configured `GALILEO_WORKSHOP_KEY_SEED_URL`. Do not use the older `barry-2` default seed or the SplunkSE observability seed for Workshop. Stop on initialization failure. Do not store raw credentials in this repository.
+Workshop initialization obtains a temporary session using the running DevNet environment. Learners do not need a Galileo API key. The session expires when the environment ends; initialization stops if access is unavailable. Rerun `source 0-init-lab.sh workshop` to reconnect.
+
+Configure `GALILEO_LAB_BOOTSTRAP_URL` as `https://devnet.cisco.com/v1/devenv-community/galileo/sessions` (or the corresponding `devnet-testing.cisco.com` URL). Existing environments can select the matching service from their public `LLM_BASE_URL`. Bootstrap uses the environment's existing `DEVENV_USER`, `DEVENV_PASSWORD`, and `devpod-` hostname. Session credentials stay in separate `GALILEO_LAB_SESSION_*` fields and `GALILEO_LAB_GATEWAY_URL`; they are never used with the native Galileo API.
+
+Preloaded `GALILEO_API_KEY` and instructor-configured `GALILEO_WORKSHOP_KEY_SEED_URL` remain supported and take precedence over temporary sessions, retaining the native Galileo destination. A native key with an explicit native `GALILEO_API_BASE_URL` can also read earlier saved runs from that destination. Saved runs remain bound to their original API destination. Do not use the older `barry-2` default seed or the SplunkSE observability seed for Workshop. Stop on initialization failure. Do not store raw credentials in this repository.
 
 Enable the Workshop runtime credential for learner sessions before offering the exercises. Give each learner an individual organization Read-only identity with Viewer access to AI Observability Lab, and verify sign-in separately. A Viewer login permits UI exploration; it does not supply the runtime ingestion credential. The helper does not create identities or grants. Learners without viewer access can complete the API path once their API session is enabled.
 

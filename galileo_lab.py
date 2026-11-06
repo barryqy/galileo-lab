@@ -123,7 +123,7 @@ def client_or_exit() -> GalileoClient:
         return GalileoClient()
     except Exception as exc:
         print(f"Configuration error: {exc}")
-        print("Set GALILEO_API_KEY and rerun source 0-init-lab.sh.")
+        print("Rerun source 0-init-lab.sh with the intended profile.")
         raise SystemExit(2)
 
 

@@ -4,10 +4,14 @@ import json
 import os
 import warnings
 from typing import Any, Dict, Optional
+from urllib.parse import unquote, urlsplit
 
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL.*")
 
 import requests
+
+from galileo_session import (SERVICE_HOSTS, SERVICE_PATH, SESSION_ERROR,
+    bootstrap_session, bootstrap_url, session_from_env)
 
 
 def api_payload(value: Any) -> Any:
@@ -41,24 +45,74 @@ class GalileoClient:
         self.api_key = api_key or os.environ.get("GALILEO_API_KEY", "").strip()
         self.base_url = (base_url or os.environ.get("GALILEO_API_BASE_URL") or "https://api.galileo.ai").rstrip("/")
         self.last_response_headers: Dict[str, str] = {}
+        self.session = None
+        gateway = os.environ.get("GALILEO_LAB_GATEWAY_URL", "")
 
-        if not self.api_key:
+        if self.api_key:
+            if not base_url and gateway and self.base_url == gateway:
+                self.base_url = "https://api.multitenant.galileocloud.io"
+            destination = urlsplit(self.base_url)
+            if ((destination.hostname in SERVICE_HOSTS and destination.path.startswith(SERVICE_PATH))
+                    or (gateway and self.base_url == gateway)):
+                raise RuntimeError("Use a native Galileo API destination with GALILEO_API_KEY.")
+            return
+
+        if os.environ.get("GALILEO_LAB_PROFILE") != "workshop":
             raise RuntimeError("GALILEO_API_KEY is required")
+        self.session = session_from_env()
+        if self.base_url != self.session.base_url:
+            raise RuntimeError(SESSION_ERROR)
 
     def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        if self.session:
+            parsed_path = urlsplit(path)
+            segments = unquote(parsed_path.path).split("/")
+            if (parsed_path.scheme or parsed_path.netloc or parsed_path.fragment
+                    or not parsed_path.path.startswith("/v2/") or any(part in {".", ".."} for part in segments)):
+                raise RuntimeError(SESSION_ERROR)
         url = f"{self.base_url}{path if path.startswith('/') else '/' + path}"
         headers: Dict[str, str] = dict(kwargs.pop("headers", {}) or {})
-        headers.setdefault("Galileo-API-Key", self.api_key)
+        if self.session:
+            headers = {key: value for key, value in headers.items()
+                if key.lower() not in {"galileo-api-key", "authorization", "proxy-authorization"}}
+            headers["Galileo-API-Key"] = self.session.token
+            kwargs["allow_redirects"] = False
+            kwargs.pop("auth", None)
+        else:
+            headers.setdefault("Galileo-API-Key", self.api_key)
 
         timeout = kwargs.pop("timeout", 30)
         parts = path.strip("/").split("/")
         telemetry_path = len(parts) >= 4 and parts[:2] == ["v2", "projects"] and parts[3] in {"traces", "spans", "sessions"}
         if "json" in kwargs and telemetry_path:
             kwargs["json"] = api_payload(kwargs["json"])
-        response = requests.request(method, url, headers=headers, timeout=timeout, **kwargs)
+        for attempt in range(2):
+            try:
+                response = requests.request(method, url, headers=dict(headers), timeout=timeout, **kwargs)
+            except requests.RequestException:
+                if self.session:
+                    raise RuntimeError("Workshop request did not complete. Check findings before repeating a write.") from None
+                raise
+            if not self.session or response.status_code != 401 or attempt:
+                break
+            renewal_env = dict(os.environ)
+            try:
+                renewal_base = bootstrap_url(renewal_env).removesuffix("/sessions") + "/proxy"
+            except ValueError:
+                raise RuntimeError(SESSION_ERROR) from None
+            if renewal_base != self.base_url:
+                raise RuntimeError(SESSION_ERROR)
+            renewed = bootstrap_session(renewal_env)
+            if renewed.base_url != self.base_url:
+                raise RuntimeError(SESSION_ERROR)
+            self.session = renewed
+            headers["Galileo-API-Key"] = renewed.token
+        if self.session and 300 <= response.status_code < 400:
+            raise RuntimeError(SESSION_ERROR)
         self.last_response_headers = dict(response.headers)
         if response.status_code >= 400:
-            raise GalileoApiError(method.upper(), url, response.status_code, response.text)
+            text = "Workshop request failed." if self.session else response.text
+            raise GalileoApiError(method.upper(), url, response.status_code, text)
 
         if not response.text.strip():
             return {}

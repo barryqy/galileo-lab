@@ -40,6 +40,10 @@ if [ -f .env ]; then
   done < .env
 fi
 
+export GALILEO_LAB_PROFILE="${1:-}"
+unset GALILEO_LAB_SESSION_TOKEN GALILEO_LAB_GATEWAY_URL GALILEO_LAB_SESSION_EXPIRES_AT
+unset GALILEO_LAB_SESSION_PROJECT_ID GALILEO_LAB_SESSION_LOG_STREAM_ID GALILEO_LAB_SESSION_ENVIRONMENT_ID
+
 if [ "${1:-}" = "observability" ] || [ "${1:-}" = "workshop" ]; then
   if [ -z "${_GALILEO_ACTIVE_PROFILE:-}" ]; then
     _GALILEO_LEGACY_API_BASE_URL="${GALILEO_API_BASE_URL:-https://api.galileo.ai}"
@@ -78,10 +82,6 @@ elif [ "${1:-}" = "workshop" ]; then
   export GALILEO_PROJECT_ID="2e652072-412e-4bef-97a5-1a8f4dc5b68e"
   export GALILEO_LOG_STREAM_ID="9ac1ae85-1c47-4447-8050-df5fbb5b2ae6"
   export GALILEO_STATE_DIR=".galileo/workshop"
-  if [ -z "${GALILEO_API_KEY:-}" ] && [ -z "${GALILEO_WORKSHOP_KEY_SEED_URL:-}" ]; then
-    echo "Ask the lab instructor to enable the Workshop credential for this session."
-    return 1 2>/dev/null || exit 1
-  fi
   if [ -n "${GALILEO_WORKSHOP_KEY_SEED_URL:-}" ]; then
     export GALILEO_KEY_SEED_URL="$GALILEO_WORKSHOP_KEY_SEED_URL"
   fi
@@ -125,7 +125,25 @@ export GALILEO_CONSOLE_URL="${GALILEO_CONSOLE_URL:-https://app.galileo.ai/barry-
 export GALILEO_PROJECT="${GALILEO_PROJECT:-DevNet Galileo Lab}"
 export GALILEO_LOG_STREAM="${GALILEO_LOG_STREAM:-devnet-runtime}"
 
-if [ -z "${GALILEO_API_KEY:-}" ]; then
+if [ -z "${GALILEO_API_KEY:-}" ] && [ "${GALILEO_LAB_PROFILE:-}" = "workshop" ] \
+    && [ -z "${GALILEO_WORKSHOP_KEY_SEED_URL:-}" ]; then
+  session_fields="$(python3 "$SCRIPT_DIR/galileo_session.py")" || {
+    echo "Ask the lab instructor to check this Workshop session."
+    return 1 2>/dev/null || exit 1
+  }
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      GALILEO_LAB_SESSION_TOKEN|GALILEO_LAB_GATEWAY_URL|GALILEO_LAB_SESSION_EXPIRES_AT|GALILEO_LAB_SESSION_PROJECT_ID|GALILEO_LAB_SESSION_LOG_STREAM_ID|GALILEO_LAB_SESSION_ENVIRONMENT_ID)
+        export "$key=$value" ;;
+    esac
+  done <<EOF
+$session_fields
+EOF
+  unset session_fields line key value
+  export GALILEO_API_BASE_URL="$GALILEO_LAB_GATEWAY_URL"
+elif [ -z "${GALILEO_API_KEY:-}" ]; then
   if ! fetch_galileo_seed_key; then
     echo ""
     echo "GALILEO_API_KEY is not available."
