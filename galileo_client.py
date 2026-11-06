@@ -10,8 +10,8 @@ warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL.*")
 
 import requests
 
-from galileo_session import (SERVICE_HOSTS, SERVICE_PATH, SESSION_ERROR,
-    bootstrap_session, bootstrap_url, session_from_env)
+from galileo_session import (BARRY_PROXY, NoAutomaticAuth, SERVICE_HOSTS, SERVICE_PATH, SESSION_ERROR,
+    bootstrap_session, bootstrap_url, renew_barrysecure_session, session_from_env)
 
 
 def api_payload(value: Any) -> Any:
@@ -97,6 +97,7 @@ class GalileoClient:
                 self.base_url = "https://api.multitenant.galileocloud.io"
             destination = urlsplit(self.base_url)
             if ((destination.hostname in SERVICE_HOSTS and destination.path.startswith(SERVICE_PATH))
+                    or destination.hostname == "galileo-gateway.barrysecure.com"
                     or (gateway and self.base_url == gateway)):
                 raise RuntimeError("Use a native Galileo API destination with GALILEO_API_KEY.")
             return
@@ -122,6 +123,8 @@ class GalileoClient:
             headers["Galileo-API-Key"] = self.session.token
             kwargs["allow_redirects"] = False
             kwargs.pop("auth", None)
+            if self.session.base_url == BARRY_PROXY:
+                kwargs["auth"] = NoAutomaticAuth()
         else:
             headers.setdefault("Galileo-API-Key", self.api_key)
 
@@ -143,13 +146,16 @@ class GalileoClient:
             # Requests consumes file handles while preparing multipart uploads.
             _rewind_body(positions)
             renewal_env = dict(os.environ)
-            try:
-                renewal_base = bootstrap_url(renewal_env).removesuffix("/sessions") + "/proxy"
-            except ValueError:
-                raise RuntimeError(SESSION_ERROR) from None
-            if renewal_base != self.base_url:
-                raise RuntimeError(SESSION_ERROR)
-            renewed = bootstrap_session(renewal_env)
+            if self.session.base_url == BARRY_PROXY:
+                renewed = renew_barrysecure_session(self.session, renewal_env)
+            else:
+                try:
+                    renewal_base = bootstrap_url(renewal_env).removesuffix("/sessions") + "/proxy"
+                except ValueError:
+                    raise RuntimeError(SESSION_ERROR) from None
+                if renewal_base != self.base_url:
+                    raise RuntimeError(SESSION_ERROR)
+                renewed = bootstrap_session(renewal_env)
             if renewed.base_url != self.base_url:
                 raise RuntimeError(SESSION_ERROR)
             self.session = renewed

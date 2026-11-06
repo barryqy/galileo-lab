@@ -4,7 +4,7 @@ Run support tests, inspect token use, delay, and fictional private-data findings
 
 ## Quick Start
 
-An instructor-enabled lab session is required. Use the setup block in the DevNet guide or this block in the configured lab environment:
+An instructor-enabled lab session is required. During first setup, open the Connect link printed in the terminal and enter the invitation supplied by your instructor. Keep the terminal running until it reports that the session is ready. Later commands reuse the connection. Use the setup block in the DevNet guide or this block in the configured lab environment:
 
 ```bash
 cd /home/developer/src || exit 1
@@ -60,19 +60,23 @@ The guide uses `source 0-init-lab.sh workshop` for the Workshop destination:
 | Setting | Destination |
 | --- | --- |
 | Galileo API | `https://api.multitenant.galileocloud.io` |
-| Workshop session API | Selected automatically from the DevNet environment |
+| Workshop session API | `https://galileo-gateway.barrysecure.com/v1/galileo/proxy` |
 | Console | `https://console.multitenant.galileocloud.io/workshop` |
 | Project | **AI Observability Lab**, `2e652072-412e-4bef-97a5-1a8f4dc5b68e` |
 | Stream | **ai-observability-lab**, `9ac1ae85-1c47-4447-8050-df5fbb5b2ae6` |
 | Local state | `.galileo/workshop` |
 
-Workshop initialization obtains a temporary session using the running DevNet environment. Learners do not need a Galileo API key. The session expires when the environment ends; initialization stops if access is unavailable. Rerun `source 0-init-lab.sh workshop` to reconnect.
+Workshop initialization connects through the Barrysecure gateway. Learners open the printed Connect link once and use an individual invitation from the instructor. No Galileo API key, Cisco password or model-service credential is sent to Barrysecure. API access tokens last up to one hour and renew automatically while the instructor's workshop grant remains valid. Re-sourcing `source 0-init-lab.sh workshop` checks and renews the existing connection. If that connection has been revoked or expired, setup offers a fresh Connect link. If a connection is lost, run setup again; a valid browser connection can reconnect without another invitation.
 
-Configure `GALILEO_LAB_BOOTSTRAP_URL` as `https://devnet.cisco.com/v1/devenv-community/galileo/sessions` (or the corresponding `devnet-testing.cisco.com` URL). Existing environments can select the matching service from their public `LLM_BASE_URL`. Bootstrap uses the environment's existing `DEVENV_USER`, `DEVENV_PASSWORD`, and `devpod-` hostname. Session credentials stay in separate `GALILEO_LAB_SESSION_*` fields and `GALILEO_LAB_GATEWAY_URL`; they are never used with the native Galileo API.
+The gateway connection and the Workshop Viewer login are separate. Connecting enables the test commands; use your own Workshop Viewer account to inspect the same results in Galileo.
+
+Session credentials stay in `GALILEO_LAB_SESSION_TOKEN` and `GALILEO_LAB_SESSION_RENEWAL_TOKEN`, with the destination in `GALILEO_LAB_GATEWAY_URL`. They are never used with the native Galileo API. The helper does not save credentials to disk. A failed command can renew an established connection once; it never starts another interactive Connect flow. If an upload cannot be replayed safely, reopen its source and rerun the command.
+
+The existing DevNet gateway remains available through explicit `GALILEO_LAB_BOOTSTRAP_URL=https://devnet.cisco.com/v1/devenv-community/galileo/sessions` (or the corresponding `devnet-testing.cisco.com` URL). This mode uses existing `DEVENV_USER` and `DEVENV_PASSWORD` only on those trusted Cisco hosts. Previously configured DevNet session descriptors remain supported. `LLM_BASE_URL` alone does not select the DevNet gateway during new Workshop setup.
 
 Preloaded `GALILEO_API_KEY` and instructor-configured `GALILEO_WORKSHOP_KEY_SEED_URL` remain supported and take precedence over temporary sessions, retaining the native Galileo destination. A native key with an explicit native `GALILEO_API_BASE_URL` can also read earlier saved runs from that destination. Saved runs remain bound to their original API destination. Do not use the older `barry-2` default seed or the SplunkSE observability seed for Workshop. Stop on initialization failure. Do not store raw credentials in this repository.
 
-Enable the Workshop runtime credential for learner sessions before offering the exercises. Give each learner an individual organization Read-only identity with Viewer access to AI Observability Lab, and verify sign-in separately. A Viewer login permits UI exploration; it does not supply the runtime ingestion credential. The helper does not create identities or grants. Learners without viewer access can complete the API path once their API session is enabled.
+Provide each learner an individual gateway invitation with an explicit workshop expiry before offering the exercises. Give each learner an individual organization Read-only identity with Viewer access to AI Observability Lab, and verify sign-in separately. A Viewer login permits UI exploration; it does not supply the runtime ingestion credential. The helper does not create identities or grants. Learners without viewer access can complete the API path once their API session is enabled.
 
 Use an individual UI identity for each learner so they can keep their own signed-in session.
 

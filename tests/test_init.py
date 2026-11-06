@@ -13,18 +13,33 @@ class InitTests(unittest.TestCase):
             root.joinpath('galileo_session.py').write_text(Path('galileo_session.py').read_text())
             root.joinpath('.venv').symlink_to(Path('.venv').resolve(), target_is_directory=True)
             if fixture_session:
+                gateway = ('https://galileo-gateway.barrysecure.com/v1/galileo' if str(fixture_session).startswith('barrysecure')
+                    else 'https://devnet.cisco.com/v1/devenv-community/galileo')
                 root.joinpath('sitecustomize.py').write_text(
                     'import requests\nfrom datetime import datetime, timedelta, timezone\n'
+                    'from pathlib import Path\n'
                     'class FixtureResponse:\n'
-                    '    status_code = 200\n'
+                    '    def __init__(self, url, headers=None):\n'
+                    '        self.renewal = (headers or {}).get("Authorization", "Bearer provided by fixture renewal").removeprefix("Bearer ")\n'
+                    '        self.url = url\n'
+                    '        self.status_code = 201 if url.endswith("/connections") else 200\n'
+                    + ('        if url.endswith("/renew") and Path("session-requests.txt").read_text().count("/renew\\n") == 1: self.status_code = 401\n' if fixture_session == 'barrysecure rejected' else '') +
                     '    def json(self):\n'
+                    '        if self.url.endswith("/connections"):\n'
+                    '            return {"connection_id": "r"*43, '
+                    '"verification_url": "https://galileo-gateway.barrysecure.com/connect?request=" + "r"*43, '
+                    '"expires_at": (datetime.now(timezone.utc)+timedelta(minutes=9)).isoformat(), "poll_interval": 2}\n'
                     '        return {"token": "provided by fixture service", '
-                    '"base_url": "https://devnet.cisco.com/v1/devenv-community/galileo/proxy", '
-                    '"expires_at": (datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(), '
+                    '"renewal_token": self.renewal, '
+                    '"base_url": ' + repr(gateway + '/proxy') + ', '
+                    '"expires_at": (datetime.now(timezone.utc)+timedelta(minutes=59)).isoformat(), '
                     '"project_id": "2e652072-412e-4bef-97a5-1a8f4dc5b68e", '
                     '"log_stream_id": "9ac1ae85-1c47-4447-8050-df5fbb5b2ae6", '
                     '"environment_id": "fixture-environment"}\n'
-                    'requests.post = lambda *args, **kwargs: FixtureResponse()\n')
+                    'def post(url, *args, **kwargs):\n'
+                    '    with Path("session-requests.txt").open("a") as log: log.write(url + "\\n")\n'
+                    '    return FixtureResponse(url, kwargs.get("headers"))\n'
+                    'requests.post = post\n')
             if env_text is not None:
                 root.joinpath('.env').write_text(env_text)
             root.joinpath('curl').write_text(
@@ -194,7 +209,8 @@ class InitTests(unittest.TestCase):
     def test_clean_workshop_automatically_bootstraps_without_a_native_key(self):
         env = {'HOSTNAME': 'devpod-fixture-environment', 'DEVENV_USER': 'fixture user',
             'DEVENV_PASSWORD': 'provided by fixture environment',
-            'LLM_BASE_URL': 'https://devnet.cisco.com/v1/llm'}
+            'LLM_BASE_URL': 'https://devnet.cisco.com/v1/llm',
+            'GALILEO_LAB_BOOTSTRAP_URL': 'https://devnet.cisco.com/v1/devenv-community/galileo/sessions'}
         for shell in ('bash', 'zsh'):
             with self.subTest(shell=shell):
                 result = self.run_init('workshop && test -z "$GALILEO_API_KEY" '
@@ -209,7 +225,8 @@ class InitTests(unittest.TestCase):
     def test_session_fields_are_cleared_when_switching_to_a_native_profile(self):
         env = {'HOSTNAME': 'devpod-fixture-environment', 'DEVENV_USER': 'fixture user',
             'DEVENV_PASSWORD': 'provided by fixture environment',
-            'LLM_BASE_URL': 'https://devnet.cisco.com/v1/llm'}
+            'LLM_BASE_URL': 'https://devnet.cisco.com/v1/llm',
+            'GALILEO_LAB_BOOTSTRAP_URL': 'https://devnet.cisco.com/v1/devenv-community/galileo/sessions'}
         for shell in ('bash', 'zsh'):
             for ending in ('observability', ''):
                 with self.subTest(shell=shell, ending=ending):
@@ -232,6 +249,99 @@ class InitTests(unittest.TestCase):
                         credential=credential, extra_env=settings, shell=shell)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn('https://api.multitenant.galileocloud.io|', result.stdout)
+
+
+    def test_barrysecure_connects_once_and_reuses_session_when_sourced_again(self):
+        from test_barrysecure_session import environment
+        for shell in ('bash', 'zsh'):
+            with self.subTest(shell=shell):
+                result = self.run_init('workshop && source ./0-init-lab.sh workshop '
+                    '&& test -n "$GALILEO_LAB_SESSION_RENEWAL_TOKEN" '
+                    '&& test -z "$GALILEO_API_KEY" && test "$(wc -l < session-requests.txt)" -eq 3',
+                    credential=False, extra_env=environment(), shell=shell, fixture_session='barrysecure')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('https://galileo-gateway.barrysecure.com/v1/galileo/proxy|', result.stdout)
+                self.assertEqual(result.stderr.count('Connect this lab once'), 1)
+                self.assertNotIn('provided by', result.stdout + result.stderr)
+
+    def test_preloaded_barrysecure_session_renews_without_connect_on_setup(self):
+        from test_barrysecure_session import session_environment
+        for shell in ('bash', 'zsh'):
+            result = self.run_init('workshop && test -n "$GALILEO_LAB_SESSION_RENEWAL_TOKEN"',
+                credential=False, extra_env=session_environment(), shell=shell, fixture_session='barrysecure')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn('Connect', result.stderr)
+            self.assertIn('https://galileo-gateway.barrysecure.com/v1/galileo/proxy|', result.stdout)
+
+    def test_expired_barrysecure_session_renews_during_setup_without_connect(self):
+        from datetime import datetime, timedelta, timezone
+        from test_barrysecure_session import session_environment
+        env = session_environment()
+        env['GALILEO_LAB_SESSION_EXPIRES_AT'] = (datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+        env['GALILEO_LAB_SESSION_RENEWAL_TOKEN'] = 'provided by fixture renewal'
+        for shell in ('bash', 'zsh'):
+            result = self.run_init('workshop && test "$(wc -l < session-requests.txt)" -eq 1',
+                credential=False, extra_env=env, shell=shell, fixture_session='barrysecure')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn('Connect', result.stderr)
+
+    def test_barrysecure_session_does_not_carry_renewal_into_native_profiles(self):
+        from test_barrysecure_session import session_environment
+        for shell in ('bash', 'zsh'):
+            for ending in ('observability', ''):
+                result = self.run_init('workshop && export GALILEO_API_KEY="provided by native runtime" '
+                    '&& source ./0-init-lab.sh ' + ending + ' && test -z "$GALILEO_LAB_SESSION_RENEWAL_TOKEN" '
+                    '&& test -z "$GALILEO_LAB_GATEWAY_URL"', credential=False,
+                    extra_env=session_environment(), shell=shell, fixture_session='barrysecure')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn('barrysecure.com', result.stdout)
+
+
+    def test_fresh_shell_restores_custom_legacy_settings_after_connect(self):
+        from test_barrysecure_session import environment
+        env = environment()
+        env.update({'GALILEO_API_BASE_URL': 'https://custom-native.invalid', 'GALILEO_PROJECT': 'custom legacy project',
+            'GALILEO_LOG_STREAM': 'legacy-stream', 'GALILEO_STATE_DIR': '.galileo/custom',
+            'GALILEO_PROJECT_ID': 'legacy-project', 'GALILEO_LOG_STREAM_ID': 'legacy-stream-id'})
+        for shell in ('bash', 'zsh'):
+            with self.subTest(shell=shell):
+                child = ('source ./0-init-lab.sh && test "$GALILEO_API_BASE_URL" = https://custom-native.invalid '
+                    '&& test "$GALILEO_PROJECT" = "custom legacy project" '
+                    '&& test "$GALILEO_STATE_DIR" = .galileo/custom '
+                    '&& test "$GALILEO_PROJECT_ID" = legacy-project && test -z "$GALILEO_LAB_SESSION_RENEWAL_TOKEN"')
+                import shlex
+                result = self.run_init('workshop && export GALILEO_API_KEY="provided by native runtime" '
+                    '&& ' + shell + ' -c ' + shlex.quote(child), credential=False,
+                    extra_env=env, shell=shell, fixture_session='barrysecure')
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+
+    def test_expired_rejected_session_can_connect_again_during_explicit_setup(self):
+        from datetime import datetime, timedelta, timezone
+        from test_barrysecure_session import session_environment
+        env = session_environment()
+        env['GALILEO_LAB_SESSION_EXPIRES_AT'] = (datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+        for shell in ('bash', 'zsh'):
+            with self.subTest(shell=shell):
+                result = self.run_init('workshop && source ./0-init-lab.sh workshop '
+                    '&& test "$GALILEO_LAB_SESSION_TOKEN" = "provided by fixture service" '
+                    '&& test "$(wc -l < session-requests.txt)" -eq 4', credential=False,
+                    extra_env=env, shell=shell, fixture_session='barrysecure rejected')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr.count('Connect this lab once'), 1)
+                self.assertNotIn('provided by', result.stdout + result.stderr)
+
+
+    def test_unexpired_revoked_session_can_reconnect_in_bash_and_zsh(self):
+        from test_barrysecure_session import session_environment
+        for shell in ('bash', 'zsh'):
+            with self.subTest(shell=shell):
+                result = self.run_init('workshop && test "$GALILEO_LAB_SESSION_TOKEN" = "provided by fixture service" '
+                    '&& test "$(wc -l < session-requests.txt)" -eq 3', credential=False,
+                    extra_env=session_environment(), shell=shell, fixture_session='barrysecure rejected')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr.count('Connect this lab once'), 1)
+                self.assertNotIn('provided by', result.stdout + result.stderr)
 
 
 
