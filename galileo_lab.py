@@ -815,15 +815,21 @@ def cmd_trends(_: argparse.Namespace) -> None:
     print(result)
 
 
+def section_widgets(trends: Dict[str, Any], section_id: str) -> List[Dict[str, Any]]:
+    widgets = [item for item in trends.get("widgets") or []
+        if str(item.get("section_id")) == section_id]
+    for section in trends.get("sections") or []:
+        if first_id(section) == section_id:
+            widgets.extend(section.get("widgets") or [])
+    return widgets
+
+
 def cmd_dashboard(_: argparse.Namespace) -> None:
     client = client_or_exit()
     ids = ensure_project_and_stream(client)
     base = f"/v2/projects/{ids['project_id']}/log_streams/{ids['log_stream_id']}/trends"
     trends = client.get(base)
     sections = trends.get("sections") or []
-    widgets = list(trends.get("widgets") or [])
-    for item in sections:
-        widgets.extend(item.get("widgets") or [])
     section = find_by_name(sections, "BarryBot release readiness")
     if not section:
         section = client.post(base + "/sections", json={
@@ -833,7 +839,10 @@ def cmd_dashboard(_: argparse.Namespace) -> None:
         })
 
     section_id = first_id(section)
-    existing_names = {first_name(item).lower() for item in widgets}
+    if not section_id:
+        raise RuntimeError("BarryBot release section has no ID")
+    existing = {(first_name(item).lower(), item.get("metric"), item.get("aggregation"), item.get("type"))
+        for item in section_widgets(trends, section_id)}
     desired = [
         ("Action completion", "action_completion", "Average"),
         ("Policy compliance", "policy_compliance", "Average"),
@@ -841,7 +850,7 @@ def cmd_dashboard(_: argparse.Namespace) -> None:
         ("Tool errors", "tool_errors", "Sum"),
     ]
     for name, metric, aggregation in desired:
-        if name.lower() in existing_names:
+        if (name.lower(), metric, aggregation, "line_chart") in existing:
             continue
         client.post(base + "/widgets", json={
             "name": name,
@@ -853,14 +862,18 @@ def cmd_dashboard(_: argparse.Namespace) -> None:
         })
     latest = client.get(base)
     total_widgets = len(latest.get("widgets") or [])
-    release_widgets = 0
     for item in latest.get("sections") or []:
         total_widgets += len(item.get("widgets") or [])
-        if first_name(item).lower() == "barrybot release readiness":
-            release_widgets = len(item.get("widgets") or [])
+    release_widgets = section_widgets(latest, section_id)
+    stored = {(first_name(item).lower(), item.get("metric"), item.get("aggregation"), item.get("type"))
+        for item in release_widgets}
+    missing = [name for name, metric, aggregation in desired
+        if (name.lower(), metric, aggregation, "line_chart") not in stored]
+    if missing:
+        raise RuntimeError("BarryBot release widgets missing after readback: " + ", ".join(missing))
     print("BarryBot dashboard configured in Galileo")
     print(f"  section:       {first_name(section)}")
-    print(f"  release widgets: {release_widgets}")
+    print(f"  release widgets: {len(release_widgets)}")
     print(f"  total widgets: {total_widgets}")
 
 
