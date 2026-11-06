@@ -31,6 +31,50 @@ def api_payload(value: Any) -> Any:
     return result
 
 
+def _body_positions(files, data):
+    streams = []
+    if files:
+        if isinstance(files, dict):
+            entries = files.items()
+        elif isinstance(files, (list, tuple)):
+            entries = files
+        else:
+            return None
+        for _, value in entries:
+            if isinstance(value, (list, tuple)):
+                value = value[1]
+            if hasattr(value, 'read'):
+                streams.append(value)
+    if hasattr(data, 'read'):
+        streams.append(data)
+    elif data is not None and not isinstance(data, (dict, list, tuple, str, bytes, bytearray)):
+        return None
+    positions = []
+    for stream in streams:
+        try:
+            if not callable(getattr(stream, 'seek', None)) or not getattr(stream, 'seekable', lambda: True)():
+                return None
+            position = stream.tell()
+            if not isinstance(position, int) or position < 0:
+                return None
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+        positions.append((stream, position))
+    return positions
+
+
+def _rewind_body(positions):
+    try:
+        if positions is None:
+            raise ValueError('body is not replayable')
+        for stream, position in positions:
+            stream.seek(position)
+            if stream.tell() != position:
+                raise ValueError('body could not be rewound')
+    except (AttributeError, OSError, TypeError, ValueError):
+        raise RuntimeError('Workshop authentication expired. Please reopen the request source and rerun the command.') from None
+
+
 class GalileoApiError(RuntimeError):
     def __init__(self, method: str, url: str, status_code: int, text: str):
         self.method = method
@@ -86,6 +130,7 @@ class GalileoClient:
         telemetry_path = len(parts) >= 4 and parts[:2] == ["v2", "projects"] and parts[3] in {"traces", "spans", "sessions"}
         if "json" in kwargs and telemetry_path:
             kwargs["json"] = api_payload(kwargs["json"])
+        positions = _body_positions(kwargs.get("files"), kwargs.get("data")) if self.session else []
         for attempt in range(2):
             try:
                 response = requests.request(method, url, headers=dict(headers), timeout=timeout, **kwargs)
@@ -95,6 +140,8 @@ class GalileoClient:
                 raise
             if not self.session or response.status_code != 401 or attempt:
                 break
+            # Requests consumes file handles while preparing multipart uploads.
+            _rewind_body(positions)
             renewal_env = dict(os.environ)
             try:
                 renewal_base = bootstrap_url(renewal_env).removesuffix("/sessions") + "/proxy"

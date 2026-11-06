@@ -164,6 +164,151 @@ class SessionClientTests(unittest.TestCase):
                             client.get('/v2/current_user')
                 bootstrap.assert_not_called()
 
+    def test_renewal_rewinds_seekable_multipart_files_to_the_original_offset(self):
+        import io
+        import requests
+        from galileo_session import WorkshopSession
+        from test_galileo_session import descriptor
+        payload = b'input,ground_truth\nhello,world\n'
+        for form in ('bare', 'pair', 'triple', 'quadruple', 'repeated fields'):
+            with self.subTest(form=form):
+                source = io.BytesIO(b'skip this prefix' + payload)
+                source.seek(len(b'skip this prefix'))
+                if form == 'bare':
+                    files = {'file': source}
+                elif form == 'pair':
+                    files = {'file': ('fixture.csv', source)}
+                elif form == 'triple':
+                    files = {'file': ('fixture.csv', source, 'text/csv')}
+                elif form == 'quadruple':
+                    files = {'file': ('fixture.csv', source, 'text/csv', {'X-Fixture': 'csv'})}
+                else:
+                    files = [('file', ('fixture.csv', source, 'text/csv')),
+                        ('file', ('other.csv', io.BytesIO(b'other fixture row'))),
+                        ('inline', ('inline.txt', b'inline fixture bytes'))]
+                bodies = []
+
+                def send(adapter, request, **kwargs):
+                    bodies.append(request.body)
+                    result = requests.Response()
+                    result.status_code = 401 if len(bodies) == 1 else 201
+                    result._content = b'{"id":"fixture-dataset"}'
+                    result.request = request
+                    return result
+
+                with patch.dict('os.environ', session_environment(), clear=True):
+                    with patch('requests.adapters.HTTPAdapter.send', send):
+                        with patch('galileo_client.bootstrap_session', return_value=WorkshopSession(**descriptor())) as bootstrap:
+                            result = GalileoClient().post('/v2/datasets', data={'project_id': 'fixture-project'}, files=files)
+                self.assertEqual(result, {'id': 'fixture-dataset'})
+                self.assertEqual(len(bodies), 2)
+                self.assertEqual(bootstrap.call_count, 1)
+                for body in bodies:
+                    self.assertIn(payload, body)
+                    self.assertNotIn(b'skip this prefix', body)
+                    self.assertIn(b'fixture-project', body)
+                    if form == 'repeated fields':
+                        self.assertIn(b'other fixture row', body)
+                        self.assertIn(b'inline fixture bytes', body)
+
+    def test_nonseekable_multipart_source_is_not_replayed_after_auth_failure(self):
+        import io
+        import requests
+
+        class ForwardOnly(io.BytesIO):
+            def seekable(self):
+                return False
+
+        attempts = []
+
+        def send(adapter, request, **kwargs):
+            attempts.append(request.body)
+            result = requests.Response()
+            result.status_code = 401
+            result._content = b'{}'
+            result.request = request
+            return result
+
+        with patch.dict('os.environ', session_environment(), clear=True):
+            with patch('requests.adapters.HTTPAdapter.send', send):
+                with patch('galileo_client.bootstrap_session') as bootstrap:
+                    with self.assertRaisesRegex(RuntimeError, 'reopen.*source'):
+                        GalileoClient().post('/v2/datasets', files={'file': ForwardOnly(b'fixture csv')})
+        self.assertEqual(len(attempts), 1)
+        bootstrap.assert_not_called()
+
+    def test_failed_rewind_stops_before_a_second_write_without_exposing_file_errors(self):
+        import io
+        import requests
+
+        class FailedRewind(io.BytesIO):
+            def seek(self, offset, whence=0):
+                raise OSError('sensitive file error')
+
+        attempts = []
+
+        def send(adapter, request, **kwargs):
+            attempts.append(request.body)
+            result = requests.Response()
+            result.status_code = 401
+            result._content = b'{}'
+            result.request = request
+            return result
+
+        with patch.dict('os.environ', session_environment(), clear=True):
+            with patch('requests.adapters.HTTPAdapter.send', send):
+                with patch('galileo_client.bootstrap_session') as bootstrap:
+                    with self.assertRaisesRegex(RuntimeError, 'reopen.*source') as caught:
+                        GalileoClient().post('/v2/datasets', files={'file': FailedRewind(b'fixture csv')})
+        self.assertNotIn('sensitive file error', str(caught.exception))
+        self.assertEqual(len(attempts), 1)
+        bootstrap.assert_not_called()
+
+
+    def test_forward_only_upload_still_succeeds_without_authentication_failure(self):
+        import io
+        import requests
+
+        class ForwardOnly(io.BytesIO):
+            def tell(self):
+                raise OSError('position unavailable')
+
+        bodies = []
+
+        def send(adapter, request, **kwargs):
+            bodies.append(request.body)
+            result = requests.Response()
+            result.status_code = 201
+            result._content = b'{"id":"fixture-dataset"}'
+            result.request = request
+            return result
+
+        with patch.dict('os.environ', session_environment(), clear=True):
+            with patch('requests.adapters.HTTPAdapter.send', send):
+                result = GalileoClient().post('/v2/datasets', files={'file': ForwardOnly(b'fixture csv')})
+        self.assertEqual(result, {'id': 'fixture-dataset'})
+        self.assertEqual(len(bodies), 1)
+        self.assertIn(b'fixture csv', bodies[0])
+
+    def test_multipart_transport_timeout_never_renews_or_replays_the_write(self):
+        import io
+        import requests
+        bodies = []
+
+        def send(adapter, request, **kwargs):
+            bodies.append(request.body)
+            raise requests.Timeout('sensitive transport details')
+
+        with patch.dict('os.environ', session_environment(), clear=True):
+            with patch('requests.adapters.HTTPAdapter.send', send):
+                with patch('galileo_client.bootstrap_session') as bootstrap:
+                    with self.assertRaisesRegex(RuntimeError, 'Check findings') as caught:
+                        GalileoClient().post('/v2/datasets', files={'file': io.BytesIO(b'fixture csv')})
+        self.assertEqual(len(bodies), 1)
+        self.assertNotIn('sensitive transport details', str(caught.exception))
+        bootstrap.assert_not_called()
+
+
 
 if __name__ == "__main__":
     unittest.main()
