@@ -18,7 +18,7 @@ import requests
 
 SERVICE_HOSTS = {'devnet.cisco.com', 'devnet-testing.cisco.com'}
 SERVICE_PATH = '/v1/devenv-community/galileo'
-BARRY_BASE = 'https://galileo-gateway.barrysecure.com/v1/galileo'
+BARRY_BASE = 'https://o11y.barrysecure.com/v1/galileo'
 BARRY_PROXY = BARRY_BASE + '/proxy'
 PROJECT_ID = '2e652072-412e-4bef-97a5-1a8f4dc5b68e'
 STREAM_ID = '9ac1ae85-1c47-4447-8050-df5fbb5b2ae6'
@@ -219,7 +219,7 @@ def connect_session(environ):
         request_id = value.get('connection_id', '')
         if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', request_id):
             raise ValueError('invalid connection')
-        expected_link = 'https://galileo-gateway.barrysecure.com/connect?request=' + request_id
+        expected_link = 'https://o11y.barrysecure.com/connect?request=' + request_id
         if value.get('verification_url') != expected_link or value.get('poll_interval') != 2:
             raise ValueError('invalid connection link')
         expiry = value.get('expires_at', '')

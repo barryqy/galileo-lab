@@ -60,7 +60,7 @@ The guide uses `source 0-init-lab.sh workshop` for the Workshop destination:
 | Setting | Destination |
 | --- | --- |
 | Galileo API | `https://api.multitenant.galileocloud.io` |
-| Workshop session API | `https://galileo-gateway.barrysecure.com/v1/galileo/proxy` |
+| Workshop session API | `https://o11y.barrysecure.com/v1/galileo/proxy` |
 | Console | `https://console.multitenant.galileocloud.io/workshop` |
 | Project | **AI Observability Lab**, `2e652072-412e-4bef-97a5-1a8f4dc5b68e` |
 | Stream | **ai-observability-lab**, `9ac1ae85-1c47-4447-8050-df5fbb5b2ae6` |

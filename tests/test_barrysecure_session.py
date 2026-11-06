@@ -10,7 +10,7 @@ from unittest.mock import patch
 import requests
 import galileo_session as sessions
 
-BASE = 'https://galileo-gateway.barrysecure.com/v1/galileo'
+BASE = 'https://o11y.barrysecure.com/v1/galileo'
 REQUEST_ID = 'r' * 43
 
 
@@ -30,7 +30,7 @@ def descriptor():
 
 def started():
     return {'connection_id': REQUEST_ID,
-        'verification_url': 'https://galileo-gateway.barrysecure.com/connect?request=' + REQUEST_ID,
+        'verification_url': 'https://o11y.barrysecure.com/connect?request=' + REQUEST_ID,
         'expires_at': (datetime.now(timezone.utc) + timedelta(minutes=9)).isoformat(), 'poll_interval': 2}
 
 
@@ -98,11 +98,11 @@ class BarrysecureSessionTests(unittest.TestCase):
 
     def test_connect_link_is_validated_before_any_output_or_poll(self):
         links = ['https://foreign.invalid/connect?request=' + REQUEST_ID,
-            'http://galileo-gateway.barrysecure.com/connect?request=' + REQUEST_ID,
-            'https://galileo-gateway.barrysecure.com/v1/galileo/connect?request=' + REQUEST_ID,
+            'http://o11y.barrysecure.com/connect?request=' + REQUEST_ID,
+            'https://o11y.barrysecure.com/v1/galileo/connect?request=' + REQUEST_ID,
             started()['verification_url'] + '&request=' + REQUEST_ID,
             started()['verification_url'] + '&other=1', started()['verification_url'] + '#fragment',
-            'https://galileo-gateway.barrysecure.com/connect?request=another-request']
+            'https://o11y.barrysecure.com/connect?request=another-request']
         for url in links:
             value = started()
             value['verification_url'] = url

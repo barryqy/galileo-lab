@@ -13,7 +13,7 @@ class InitTests(unittest.TestCase):
             root.joinpath('galileo_session.py').write_text(Path('galileo_session.py').read_text())
             root.joinpath('.venv').symlink_to(Path('.venv').resolve(), target_is_directory=True)
             if fixture_session:
-                gateway = ('https://galileo-gateway.barrysecure.com/v1/galileo' if str(fixture_session).startswith('barrysecure')
+                gateway = ('https://o11y.barrysecure.com/v1/galileo' if str(fixture_session).startswith('barrysecure')
                     else 'https://devnet.cisco.com/v1/devenv-community/galileo')
                 root.joinpath('sitecustomize.py').write_text(
                     'import requests\nfrom datetime import datetime, timedelta, timezone\n'
@@ -27,7 +27,7 @@ class InitTests(unittest.TestCase):
                     '    def json(self):\n'
                     '        if self.url.endswith("/connections"):\n'
                     '            return {"connection_id": "r"*43, '
-                    '"verification_url": "https://galileo-gateway.barrysecure.com/connect?request=" + "r"*43, '
+                    '"verification_url": "https://o11y.barrysecure.com/connect?request=" + "r"*43, '
                     '"expires_at": (datetime.now(timezone.utc)+timedelta(minutes=9)).isoformat(), "poll_interval": 2}\n'
                     '        return {"token": "provided by fixture service", '
                     '"renewal_token": self.renewal, '
@@ -260,7 +260,7 @@ class InitTests(unittest.TestCase):
                     '&& test -z "$GALILEO_API_KEY" && test "$(wc -l < session-requests.txt)" -eq 3',
                     credential=False, extra_env=environment(), shell=shell, fixture_session='barrysecure')
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn('https://galileo-gateway.barrysecure.com/v1/galileo/proxy|', result.stdout)
+                self.assertIn('https://o11y.barrysecure.com/v1/galileo/proxy|', result.stdout)
                 self.assertEqual(result.stderr.count('Connect this lab once'), 1)
                 self.assertNotIn('provided by', result.stdout + result.stderr)
 
@@ -271,7 +271,7 @@ class InitTests(unittest.TestCase):
                 credential=False, extra_env=session_environment(), shell=shell, fixture_session='barrysecure')
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn('Connect', result.stderr)
-            self.assertIn('https://galileo-gateway.barrysecure.com/v1/galileo/proxy|', result.stdout)
+            self.assertIn('https://o11y.barrysecure.com/v1/galileo/proxy|', result.stdout)
 
     def test_expired_barrysecure_session_renews_during_setup_without_connect(self):
         from datetime import datetime, timedelta, timezone

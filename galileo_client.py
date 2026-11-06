@@ -97,7 +97,7 @@ class GalileoClient:
                 self.base_url = "https://api.multitenant.galileocloud.io"
             destination = urlsplit(self.base_url)
             if ((destination.hostname in SERVICE_HOSTS and destination.path.startswith(SERVICE_PATH))
-                    or destination.hostname == "galileo-gateway.barrysecure.com"
+                    or destination.hostname == "o11y.barrysecure.com"
                     or (gateway and self.base_url == gateway)):
                 raise RuntimeError("Use a native Galileo API destination with GALILEO_API_KEY.")
             return
