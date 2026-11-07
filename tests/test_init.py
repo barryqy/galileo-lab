@@ -12,6 +12,12 @@ class InitTests(unittest.TestCase):
             root.joinpath('0-init-lab.sh').write_text(Path('0-init-lab.sh').read_text())
             root.joinpath('galileo_session.py').write_text(Path('galileo_session.py').read_text())
             root.joinpath('.venv').symlink_to(Path('.venv').resolve(), target_is_directory=True)
+            root.joinpath('sitecustomize.py').write_text(
+                'import requests\nimport sys\n'
+                'def unexpected_request(*args, **kwargs):\n'
+                '    print("unexpected-session-request", file=sys.stderr)\n'
+                '    raise requests.RequestException("session request disabled in this fixture")\n'
+                'requests.post = unexpected_request\n')
             if fixture_session:
                 gateway = ('https://o11y.barrysecure.com/v1/galileo' if str(fixture_session).startswith('barrysecure')
                     else 'https://devnet.cisco.com/v1/devenv-community/galileo')
@@ -44,12 +50,8 @@ class InitTests(unittest.TestCase):
                 root.joinpath('.env').write_text(env_text)
             root.joinpath('curl').write_text(
                 '#!/bin/sh\n'
-                'if [ "$2" = "https://workshop-seed.invalid/fixture" ]; then\n'
-                '  echo workshop-fixture-key\n'
-                'else\n'
-                '  echo unexpected-key-fetch >&2\n'
-                '  exit 99\n'
-                'fi\n')
+                'echo unexpected-key-fetch >&2\n'
+                'exit 99\n')
             root.joinpath('curl').chmod(0o700)
             env = {'PATH': directory + ':' + os.environ['PATH'], 'PYTHONPATH': directory}
             if credential:
@@ -141,6 +143,69 @@ class InitTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('unexpected-key-fetch', result.stderr)
 
+    def test_preloaded_api_key_ignores_obsolete_seed_settings_in_every_profile(self):
+        env = {
+            'GALILEO_KEY_SEED_URL': 'https://legacy-seed.invalid/fixture',
+            'GALILEO_OBSERVABILITY_KEY_SEED_URL': 'https://splunkse-seed.invalid/fixture',
+            'GALILEO_WORKSHOP_KEY_SEED_URL': 'https://workshop-seed.invalid/fixture',
+            'GALILEO_LAB_BOOTSTRAP_URL': 'https://foreign.invalid/sessions',
+        }
+        for shell in ('bash', 'zsh'):
+            for profile in ('', 'observability', 'workshop'):
+                with self.subTest(shell=shell, profile=profile):
+                    result = self.run_init(profile + ' && test "$GALILEO_API_KEY" = "provided by runtime" '
+                        '&& test -z "$GALILEO_LAB_SESSION_TOKEN"', extra_env=env, shell=shell)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotIn('provided by runtime', result.stdout + result.stderr)
+                    self.assertNotIn('unexpected-key-fetch', result.stderr)
+                    self.assertNotIn('unexpected-session-request', result.stderr)
+
+    def test_env_file_native_key_keeps_its_existing_precedence_with_obsolete_seeds(self):
+        for shell in ('bash', 'zsh'):
+            for profile in ('', 'observability', 'workshop'):
+                with self.subTest(shell=shell, profile=profile):
+                    result = self.run_init(profile + ' && test "$GALILEO_API_KEY" = "provided by env file"',
+                        shell=shell, env_text='GALILEO_API_KEY=provided by env file\n'
+                        'GALILEO_WORKSHOP_KEY_SEED_URL=https://workshop-seed.invalid/fixture\n')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotIn('provided by env file', result.stdout + result.stderr)
+                    self.assertNotIn('unexpected-key-fetch', result.stderr)
+                    self.assertNotIn('unexpected-session-request', result.stderr)
+
+    def test_legacy_and_observability_without_a_key_fail_without_network_access(self):
+        for shell in ('bash', 'zsh'):
+            for profile in ('', 'observability'):
+                with self.subTest(shell=shell, profile=profile):
+                    result = self.run_init(profile, credential=False, shell=shell)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('GALILEO_API_KEY', result.stdout)
+                    self.assertIn('instructor', result.stdout.lower())
+                    self.assertNotIn('session is ready', result.stdout)
+                    self.assertNotIn('unexpected-key-fetch', result.stderr)
+                    self.assertNotIn('unexpected-session-request', result.stderr)
+
+    def test_seed_only_credentials_fail_without_fetching_or_session_fallback(self):
+        cases = (
+            ('', {'GALILEO_KEY_SEED_URL': 'https://legacy-seed.invalid/fixture'}),
+            ('observability', {'GALILEO_OBSERVABILITY_KEY_SEED_URL': 'https://splunkse-seed.invalid/fixture'}),
+            ('workshop', {'GALILEO_WORKSHOP_KEY_SEED_URL': 'https://workshop-seed.invalid/fixture'}),
+        )
+        for shell in ('bash', 'zsh'):
+            for profile, seed_env in cases:
+                with self.subTest(shell=shell, profile=profile):
+                    env = dict(seed_env, HOSTNAME='devpod-fixture-environment')
+                    result = self.run_init(profile, credential=False, extra_env=env, shell=shell,
+                        fixture_session='barrysecure')
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('GALILEO_API_KEY', result.stdout)
+                    self.assertIn('removed', result.stdout.lower())
+                    self.assertIn('instructor', result.stdout.lower())
+                    self.assertNotIn('session is ready', result.stdout)
+                    self.assertNotIn('unexpected-key-fetch', result.stderr)
+                    self.assertNotIn('Connect', result.stderr)
+                    for url in seed_env.values():
+                        self.assertNotIn(url, result.stdout + result.stderr)
+
     def test_env_file_can_override_the_restored_legacy_destination(self):
         result = self.run_init('workshop && printf "GALILEO_PROJECT=Updated env project\\n" > .env '
             '&& source ./0-init-lab.sh', env_text=
@@ -195,16 +260,17 @@ class InitTests(unittest.TestCase):
         self.assertIn('instructor', result.stdout.lower())
         self.assertNotIn('unexpected-key-fetch', result.stderr)
 
-    def test_workshop_seed_takes_precedence_over_other_profiles(self):
+    def test_workshop_seed_only_configuration_fails_even_with_other_profile_seeds(self):
         result = self.run_init('workshop', credential=False, extra_env={
             'GALILEO_WORKSHOP_KEY_SEED_URL': 'https://workshop-seed.invalid/fixture',
             'GALILEO_KEY_SEED_URL': 'https://legacy-seed.invalid/fixture',
             'GALILEO_OBSERVABILITY_KEY_SEED_URL': 'https://splunkse-seed.invalid/fixture',
         })
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('|.galileo/workshop|', result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('removed', result.stdout.lower())
         self.assertNotIn('unexpected-key-fetch', result.stderr)
-        self.assertNotIn('workshop-fixture-key', result.stdout)
+        self.assertNotIn('unexpected-session-request', result.stderr)
+        self.assertNotIn('https://', result.stdout + result.stderr)
 
     def test_clean_workshop_automatically_bootstraps_without_a_native_key(self):
         env = {'HOSTNAME': 'devpod-fixture-environment', 'DEVENV_USER': 'fixture user',
@@ -237,18 +303,14 @@ class InitTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertNotIn('/galileo/proxy', result.stdout)
 
-    def test_native_key_and_workshop_seed_precede_automatic_session_bootstrap(self):
+    def test_native_key_precedes_automatic_session_bootstrap(self):
         env = {'GALILEO_LAB_BOOTSTRAP_URL': 'https://foreign.invalid/sessions'}
         for shell in ('bash', 'zsh'):
-            for credential in (True, False):
-                settings = dict(env)
-                if not credential:
-                    settings['GALILEO_WORKSHOP_KEY_SEED_URL'] = 'https://workshop-seed.invalid/fixture'
-                with self.subTest(shell=shell, credential=credential):
-                    result = self.run_init('workshop && test -z "$GALILEO_LAB_SESSION_TOKEN"',
-                        credential=credential, extra_env=settings, shell=shell)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn('https://api.multitenant.galileocloud.io|', result.stdout)
+            with self.subTest(shell=shell):
+                result = self.run_init('workshop && test -z "$GALILEO_LAB_SESSION_TOKEN"',
+                    extra_env=env, shell=shell)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('https://api.multitenant.galileocloud.io|', result.stdout)
 
 
     def test_barrysecure_connects_once_and_reuses_session_when_sourced_again(self):

@@ -74,7 +74,9 @@ Session credentials stay in `GALILEO_LAB_SESSION_TOKEN` and `GALILEO_LAB_SESSION
 
 The existing DevNet gateway remains available through explicit `GALILEO_LAB_BOOTSTRAP_URL=https://devnet.cisco.com/v1/devenv-community/galileo/sessions` (or the corresponding `devnet-testing.cisco.com` URL). This mode uses existing `DEVENV_USER` and `DEVENV_PASSWORD` only on those trusted Cisco hosts. Previously configured DevNet session descriptors remain supported. `LLM_BASE_URL` alone does not select the DevNet gateway during new Workshop setup.
 
-Preloaded `GALILEO_API_KEY` and instructor-configured `GALILEO_WORKSHOP_KEY_SEED_URL` remain supported and take precedence over temporary sessions, retaining the native Galileo destination. A native key with an explicit native `GALILEO_API_BASE_URL` can also read earlier saved runs from that destination. Saved runs remain bound to their original API destination. Do not use the older `barry-2` default seed or the SplunkSE observability seed for Workshop. Stop on initialization failure. Do not store raw credentials in this repository.
+Preloaded `GALILEO_API_KEY` remains supported in every profile and takes precedence over temporary sessions, retaining the native Galileo destination even when obsolete seed-URL variables are present. A native key with an explicit native `GALILEO_API_BASE_URL` can also read earlier saved runs from that destination. Saved runs remain bound to their original API destination. Anonymous credential fetching, including the former Pastebin default and all `GALILEO_*KEY_SEED_URL` sources, has been removed. A Workshop configuration containing only `GALILEO_WORKSHOP_KEY_SEED_URL` fails without fetching the URL or falling back to Connect. Stop on initialization failure. Do not store raw credentials in this repository.
+
+For direct API workshops, provide one shared, project-scoped Editor key through the approved runtime secret mechanism; individual runtime keys are not required. Rotate or revoke it only after the whole cohort finishes. Use fresh learner pods without stale `.env` or `lab.env` settings: initialization retains its existing `.env` precedence. Viewer sign-in remains separate, and API key rotation does not delete saved results.
 
 Provide each learner an individual gateway invitation with an explicit workshop expiry before offering the exercises. Give each learner an individual organization Read-only identity with Viewer access to AI Observability Lab, and verify sign-in separately. A Viewer login permits UI exploration; it does not supply the runtime ingestion credential. The helper does not create identities or grants. Learners without viewer access can complete the API path once their API session is enabled.
 
@@ -89,7 +91,7 @@ The older profiles remain supported with their existing settings:
 | `source 0-init-lab.sh` | Original `barry-2` destination |
 | `source 0-init-lab.sh observability` | SplunkSE console `https://console.multitenant.galileocloud.io/splunkse`; **AI Observability Lab** project `59f3d09d-c104-4f40-a3b8-77af51ea55d1`; **ai-observability-lab** stream `3d95e2c0-38cd-4c1a-bdd8-7a259de8a33b` |
 
-The SplunkSE profile retains its preloaded `GALILEO_API_KEY` or `GALILEO_OBSERVABILITY_KEY_SEED_URL` configuration. Select the intended profile before running commands; the tenants do not share projects or credentials.
+The original and SplunkSE profiles require a preloaded `GALILEO_API_KEY`; initialization fails clearly when it is missing. They no longer fetch credentials from seed URLs. The no-argument command still selects the original profile. Select the intended profile before running commands; the tenants do not share projects or credentials.
 
 ## Optional Evaluation and Agent Exercises
 
