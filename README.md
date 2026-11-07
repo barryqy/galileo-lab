@@ -28,12 +28,15 @@ python3 galileo_lab.py findings || exit 1
 python3 galileo_lab.py open-ui
 ```
 
+After setup, run `player` anytime to show your saved agent name in bold green, including from another directory. It reuses the current lab profile and needs no API login or model call. `python3 galileo_lab.py player` also works from the lab directory.
+
 Sign in to Workshop with your own instructor-provided Viewer account. Open the displayed stream link, search for your agent name, then select the exact run and trace IDs shown by the API. Classmates can see the same synthetic traces; agent names help you find results and do not restrict access. Learners without UI access can still complete the API exercises.
 
 Run the efficient batch next, followed by `findings`, `compare-tests`, and, with viewer access, `open-ui`. Then run the privacy batch and inspect it with `findings` and `open-ui`. These read commands do not make another model call.
 
 | Command | Purpose |
 | --- | --- |
+| `player` | Show the same persistent agent name in bold green; available in the shell after setup |
 | `agent-name` | Show the persistent name assigned to this lab environment; no API login required |
 | `run-tests --suite baseline` | Run initial support cases and save evidence |
 | `run-tests --suite efficient` | Reduce repeated context and limit answer length on the same cases |

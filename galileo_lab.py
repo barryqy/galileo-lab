@@ -935,6 +935,11 @@ def cmd_agent_name(_: argparse.Namespace) -> None:
     print(f"Your agent: {get_agent_name(STATE_DIR)}")
 
 
+def cmd_player(_: argparse.Namespace) -> None:
+    from observability_tests import get_agent_name
+    print(f"Your agent: \033[1;32m{get_agent_name(STATE_DIR)}\033[0m")
+
+
 def cmd_run_tests(args: argparse.Namespace) -> None:
     from observability_tests import print_findings, print_ui, run_suite
     client = client_or_exit()
@@ -983,6 +988,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("query-traces").set_defaults(func=cmd_query_traces)
     sub.add_parser("agent-demo").set_defaults(func=cmd_agent_demo)
     sub.add_parser('agent-name').set_defaults(func=cmd_agent_name)
+    sub.add_parser('player').set_defaults(func=cmd_player)
     test_run = sub.add_parser('run-tests')
     test_run.add_argument('--suite', choices=('baseline', 'efficient', 'privacy'), default='baseline')
     test_run.set_defaults(func=cmd_run_tests)

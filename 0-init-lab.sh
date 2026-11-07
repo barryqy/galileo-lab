@@ -129,4 +129,13 @@ EOF
   export GALILEO_API_BASE_URL="$GALILEO_LAB_GATEWAY_URL"
 fi
 
+_GALILEO_PLAYER_DIR="$SCRIPT_DIR"
+player() (
+  cd "$_GALILEO_PLAYER_DIR" || return 1
+  if [ -x .venv/bin/python ]; then
+    exec .venv/bin/python galileo_lab.py player "$@"
+  fi
+  exec python3 galileo_lab.py player "$@"
+)
+
 echo "Splunk Observability lab session is ready."
