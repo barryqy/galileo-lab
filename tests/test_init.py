@@ -323,7 +323,7 @@ class InitTests(unittest.TestCase):
                     credential=False, extra_env=environment(), shell=shell, fixture_session='barrysecure')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn('https://o11y.barrysecure.com/v1/galileo/proxy|', result.stdout)
-                self.assertEqual(result.stderr.count('Connect this lab once'), 1)
+                self.assertEqual(result.stderr.count('Connect this lab once'), 0)
                 self.assertNotIn('provided by', result.stdout + result.stderr)
 
     def test_preloaded_barrysecure_session_renews_without_connect_on_setup(self):
@@ -390,7 +390,7 @@ class InitTests(unittest.TestCase):
                     '&& test "$(wc -l < session-requests.txt)" -eq 4', credential=False,
                     extra_env=env, shell=shell, fixture_session='barrysecure rejected')
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stderr.count('Connect this lab once'), 1)
+                self.assertEqual(result.stderr.count('Connect this lab once'), 0)
                 self.assertNotIn('provided by', result.stdout + result.stderr)
 
 
@@ -402,7 +402,7 @@ class InitTests(unittest.TestCase):
                     '&& test "$(wc -l < session-requests.txt)" -eq 3', credential=False,
                     extra_env=session_environment(), shell=shell, fixture_session='barrysecure rejected')
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stderr.count('Connect this lab once'), 1)
+                self.assertEqual(result.stderr.count('Connect this lab once'), 0)
                 self.assertNotIn('provided by', result.stdout + result.stderr)
 
 

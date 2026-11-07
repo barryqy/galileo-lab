@@ -230,8 +230,7 @@ def connect_session(environ):
         if not 0 < seconds <= 630:
             raise ValueError('invalid connection expiry')
         deadline = min(deadline, time.monotonic() + seconds)
-        print('Connect this lab once: open the link and select Connect lab.\n' + expected_link, file=sys.stderr)
-        print('Your tests will continue automatically after connecting.', file=sys.stderr)
+        prompted = False
         while time.monotonic() < deadline:
             try:
                 poll = _connect_post('/connections/' + request_id + '/poll', deadline,
@@ -243,6 +242,10 @@ def connect_session(environ):
             if poll is not None and poll.status_code != 503:
                 if poll.status_code != 202 or poll.json() != {'status': 'pending'}:
                     raise ValueError('connection declined')
+                if not prompted:
+                    print('Connect this lab once: open the link and select Connect lab.\n' + expected_link, file=sys.stderr)
+                    print('Your tests will continue automatically after connecting.', file=sys.stderr)
+                    prompted = True
             time.sleep(max(0, min(2, deadline - time.monotonic())))
         raise ValueError('connection expired')
     except (ValueError, TypeError, requests.RequestException, _ConnectDeadline):

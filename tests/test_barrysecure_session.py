@@ -58,6 +58,15 @@ class BarrysecureSessionTests(unittest.TestCase):
     def setUp(self):
         self.assertTrue(callable(getattr(sessions, 'initialize_session', None)), 'device Connect setup is missing')
 
+    def test_automatic_session_finishes_without_printing_a_browser_link(self):
+        stderr = io.StringIO()
+        with patch('galileo_session.requests.post', side_effect=[response(started(), 201), response(descriptor())]) as post:
+            with contextlib.redirect_stderr(stderr):
+                result = sessions.initialize_session(environment())
+        self.assertEqual(result.base_url, BASE + '/proxy')
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(stderr.getvalue(), '')
+
     def test_default_connect_uses_verifier_pairing_without_cisco_or_netrc_auth(self):
         prepared = []
         outputs = [response(started(), 201), response({'status': 'pending'}, 202), response(descriptor())]
@@ -93,6 +102,7 @@ class BarrysecureSessionTests(unittest.TestCase):
             self.assertNotIn('provided by Cisco', str(request.body))
             self.assertNotIn('provided by model', str(request.body))
         self.assertIn(started()['verification_url'], stderr.getvalue())
+        self.assertEqual(stderr.getvalue().count('Connect this lab once'), 1)
         self.assertNotIn('provided by', stderr.getvalue())
         self.assertNotIn(poll['verifier'], stderr.getvalue())
 

@@ -4,7 +4,7 @@ Run support tests, inspect token use, delay, and fictional private-data findings
 
 ## Quick Start
 
-During first setup, open the Connect link printed in the terminal and select **Connect lab**. Keep the terminal running; the tests continue automatically. Later commands reuse the connection. Use the setup block in the DevNet guide or this block in the configured lab environment:
+Click the play button in the guide to prepare the lab and run the tests. Setup connects automatically, and later commands reuse the session. Use the setup block in the DevNet guide or this block in the configured lab environment:
 
 ```bash
 cd /home/developer/src || exit 1
@@ -66,9 +66,9 @@ The guide uses `source 0-init-lab.sh workshop` for the Workshop destination:
 | Stream | **ai-observability-lab**, `9ac1ae85-1c47-4447-8050-df5fbb5b2ae6` |
 | Local state | `.galileo/workshop` |
 
-Workshop initialization connects through the Barrysecure gateway. Learners open the printed Connect link once and select **Connect lab**. No Splunk Observability API key, Cisco password or model-service credential is sent to Barrysecure. API access tokens last up to one hour and renew automatically while the workshop session remains valid. New code-free sessions last up to three hours and cannot extend beyond the configured workshop window. Re-sourcing `source 0-init-lab.sh workshop` checks and renews the existing connection. If that connection has been revoked or expired, setup offers a fresh Connect link. If a connection is lost, run setup again; a valid browser connection can reconnect without extending its original expiry.
+Workshop initialization connects through the Barrysecure gateway. The CLI obtains its temporary session automatically when the learner clicks play; no webpage or link is needed. No Splunk Observability API key, Cisco password or model-service credential is sent to Barrysecure. API access tokens last up to one hour and renew automatically while the workshop session remains valid. New code-free sessions last up to three hours and cannot extend beyond the configured workshop window. Re-sourcing `source 0-init-lab.sh workshop` checks and renews the existing connection. If the session has expired, run setup again while the workshop is open. Existing browser and invitation modes remain available as alternatives when automatic admission is unavailable.
 
-The gateway connection and the Workshop Viewer login are separate. Connecting enables the test commands; use your own Workshop Viewer account to inspect the same results in Splunk Observability.
+The temporary API session and the Workshop Viewer login are separate. Setup enables the test commands; use your own Workshop Viewer account to inspect the same results in Splunk Observability.
 
 Session credentials stay in `GALILEO_LAB_SESSION_TOKEN` and `GALILEO_LAB_SESSION_RENEWAL_TOKEN`, with the destination in `GALILEO_LAB_GATEWAY_URL`. They are never used with the native Splunk Observability API. The helper does not save credentials to disk. A failed command can renew an established connection once; it never starts another interactive Connect flow. If an upload cannot be replayed safely, reopen its source and rerun the command.
 
@@ -78,7 +78,7 @@ Preloaded `GALILEO_API_KEY` remains supported in every profile and takes precede
 
 For direct API workshops, provide one shared, project-scoped Editor key through the approved runtime secret mechanism; individual runtime keys are not required. Rotate or revoke it only after the whole cohort finishes. Use fresh learner pods without stale `.env` or `lab.env` settings: initialization retains its existing `.env` precedence. Viewer sign-in remains separate, and API key rotation does not delete saved results.
 
-Enable code-free Connect for the workshop window before offering the exercises. Set `OPEN_ADMISSION_ENABLED=true` and an explicit RFC 3339 `OPEN_ADMISSION_UNTIL` on the gateway. The gateway admits up to 100 active automatic grants by default; the operator can configure this with `OPEN_ADMISSION_MAX_ACTIVE`. Give each learner an individual organization Read-only identity with Viewer access to AI Observability Lab, and verify sign-in separately. A Viewer login permits UI exploration; it does not supply the runtime ingestion credential. The helper does not create identities or grants. Learners without viewer access can complete the API path once their API session is enabled.
+Enable code-free Connect for the workshop window before offering the exercises. Set `AUTO_CONNECT_ENABLED=true`, `OPEN_ADMISSION_ENABLED=true` and an explicit RFC 3339 `OPEN_ADMISSION_UNTIL` on the gateway. The gateway admits up to 100 active automatic grants by default; the operator can configure this with `OPEN_ADMISSION_MAX_ACTIVE`. Give each learner an individual organization Read-only identity with Viewer access to AI Observability Lab, and verify sign-in separately. A Viewer login permits UI exploration; it does not supply the runtime ingestion credential. The helper does not create identities or grants. Learners without viewer access can complete the API path once their API session is enabled.
 
 Use an individual UI identity for each learner so they can keep their own signed-in session.
 
