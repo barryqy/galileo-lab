@@ -99,7 +99,7 @@ class GalileoClient:
             if ((destination.hostname in SERVICE_HOSTS and destination.path.startswith(SERVICE_PATH))
                     or destination.hostname == "o11y.barrysecure.com"
                     or (gateway and self.base_url == gateway)):
-                raise RuntimeError("Use a native Galileo API destination with GALILEO_API_KEY.")
+                raise RuntimeError("Use a native Splunk Observability API destination with GALILEO_API_KEY.")
             return
 
         if os.environ.get("GALILEO_LAB_PROFILE") != "workshop":

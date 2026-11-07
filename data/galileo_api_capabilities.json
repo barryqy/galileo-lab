@@ -54,7 +54,7 @@
     },
     {
       "name": "Agent Control runtime policies",
-      "summary": "Evaluate a local SDK policy before a protected function runs; log its decisions separately to Galileo.",
+      "summary": "Evaluate a local SDK policy before a protected function runs; log its decisions separately to Splunk Observability.",
       "endpoints": [],
       "sdk": "agent_control.evaluation.check_evaluation_with_local",
       "source": "https://github.com/agentcontrol/agent-control/blob/ae28f1d0c21ea2caf002718647cad04b5e0f07a8/sdks/python/src/agent_control/evaluation.py#L312"

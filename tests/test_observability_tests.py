@@ -294,7 +294,7 @@ class ObservabilityTests(unittest.TestCase):
             workflow.print_findings(report)
         self.assertIn("$0.001150", output.getvalue())
         self.assertIn("$0.003450", output.getvalue())
-        self.assertIn("Galileo-reported model cost; not DevNet billing", output.getvalue())
+        self.assertIn("Splunk Observability-reported model cost; not DevNet billing", output.getvalue())
 
     def test_unsuccessful_native_cost_with_numeric_value_stays_unavailable(self):
         self.run_suite()
@@ -460,7 +460,7 @@ class ObservabilityTests(unittest.TestCase):
             workflow.print_findings(report)
         self.assertNotIn("learner@example.test", output.getvalue())
         self.assertIn("local pattern", output.getvalue().lower())
-        self.assertIn("not Galileo", output.getvalue())
+        self.assertIn("not Splunk Observability", output.getvalue())
 
     def test_model_errors_are_logged_without_successful_llm_spans(self):
         report = self.run_suite(llm=TestLLM(fail=True))

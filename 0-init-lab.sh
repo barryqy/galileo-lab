@@ -79,7 +79,7 @@ elif [ "${1:-}" = "workshop" ]; then
   export GALILEO_LOG_STREAM_ID="9ac1ae85-1c47-4447-8050-df5fbb5b2ae6"
   export GALILEO_STATE_DIR=".galileo/workshop"
 elif [ -n "${1:-}" ]; then
-  echo "Unknown Galileo lab profile: $1"
+  echo "Unknown Splunk Observability lab profile: $1"
   return 1 2>/dev/null || exit 1
 else
   _GALILEO_ACTIVE_PROFILE=""
@@ -129,4 +129,4 @@ EOF
   export GALILEO_API_BASE_URL="$GALILEO_LAB_GATEWAY_URL"
 fi
 
-echo "Galileo lab session is ready."
+echo "Splunk Observability lab session is ready."

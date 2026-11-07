@@ -41,7 +41,7 @@ GALILEO_OUTCOMES = [
     ("Measure quality and risk", "Scorers convert raw interactions into quality, safety, and reliability signals."),
     ("Control runtime behavior", "Agent Control evaluates policies before a protected function can run."),
     ("Improve with humans", "Feedback and annotations capture expert judgment for future datasets and reviews."),
-    ("Operate at scale", "Integrations, dashboards, and APIs connect Galileo to real AI delivery workflows."),
+    ("Operate at scale", "Integrations, dashboards, and APIs connect Splunk Observability to real AI delivery workflows."),
 ]
 
 def load_local_env() -> None:
@@ -145,7 +145,7 @@ def cmd_env(_: argparse.Namespace) -> None:
 
 def cmd_capabilities(_: argparse.Namespace) -> None:
     data = json.loads(CAPABILITY_FILE.read_text(encoding="utf-8"))
-    print("Galileo API capability map")
+    print("Splunk Observability API capability map")
     print(f"Source: {data['source']}")
     print("")
     for item in data["capabilities"]:
@@ -157,7 +157,7 @@ def cmd_capabilities(_: argparse.Namespace) -> None:
 
 
 def cmd_outcomes(_: argparse.Namespace) -> None:
-    print("Galileo outcomes in this lab")
+    print("Splunk Observability outcomes in this lab")
     for title, detail in GALILEO_OUTCOMES:
         print(f"- {title}: {detail}")
 
@@ -178,7 +178,7 @@ def cmd_trace_payload(_: argparse.Namespace) -> None:
     trace["spans"][0]["id"] = "span-id"
     trace["spans"][0]["trace_id"] = "trace-id"
 
-    print("Example trace payload shape (not sent to Galileo)")
+    print("Example trace payload shape (not sent to Splunk Observability)")
     print(json.dumps({
         "name": trace["name"],
         "input": trace["input"],
@@ -189,7 +189,7 @@ def cmd_trace_payload(_: argparse.Namespace) -> None:
         "spans": trace["spans"],
     }, indent=2))
     print("")
-    print("What Galileo learns from this trace")
+    print("What Splunk Observability learns from this trace")
     print("- name and tags make the interaction searchable by scenario")
     print("- input and output preserve the actual application behavior")
     print("- response_source distinguishes model replies, local fallbacks, and examples")
@@ -209,7 +209,7 @@ def cmd_dataset_preview(_: argparse.Namespace) -> None:
         print(f"  expected:  {expected}")
         print(f"  generated: {row['generated_output']}")
     print("")
-    print("What Galileo does with this")
+    print("What Splunk Observability does with this")
     print("- datasets keep evaluation cases stable across prompt and model changes")
     print("- expected and generated outputs give scorers something to compare")
     print("- metadata lets teams slice results by scenario, risk, or difficulty")
@@ -242,7 +242,7 @@ def create_or_get_project(client: GalileoClient, name: str) -> Dict[str, Any]:
     if existing:
         return existing
 
-    body = {"name": name, "description": "DevNet hands-on Galileo API lab project"}
+    body = {"name": name, "description": "DevNet hands-on Splunk Observability API lab project"}
     try:
         return client.post("/v2/projects", json=body)
     except GalileoApiError as exc:
@@ -286,16 +286,16 @@ def ensure_project_and_stream(client: GalileoClient) -> Dict[str, str]:
     project_id = os.environ.get('GALILEO_PROJECT_ID')
     log_stream_id = os.environ.get('GALILEO_LOG_STREAM_ID')
     if bool(project_id) != bool(log_stream_id):
-        raise RuntimeError('Both Galileo project and log stream IDs must be configured together')
+        raise RuntimeError('Both Splunk Observability project and log stream IDs must be configured together')
     if project_id:
         project_id = str(uuid.UUID(project_id))
         log_stream_id = str(uuid.UUID(log_stream_id))
         project = client.get(f'/v2/projects/{project_id}')
         if project.get('name') != project_name:
-            raise RuntimeError('Configured Galileo project ID does not match the lab project name')
+            raise RuntimeError('Configured Splunk Observability project ID does not match the lab project name')
         stream = client.get(f'/v2/projects/{project_id}/log_streams/{log_stream_id}')
         if stream.get('name') != stream_name or stream.get('project_id') not in (None, project_id):
-            raise RuntimeError('Configured Galileo log stream does not match the lab destination')
+            raise RuntimeError('Configured Splunk Observability log stream does not match the lab destination')
         save_state({'project_id': project_id, 'log_stream_id': log_stream_id,
             'project_name': project_name, 'log_stream_name': stream_name, 'api_base_url': client.base_url})
         return {'project_id': project_id, 'log_stream_id': log_stream_id}
@@ -328,7 +328,7 @@ def cmd_setup(_: argparse.Namespace) -> None:
     client = client_or_exit()
     ids = ensure_project_and_stream(client)
     state = load_state()
-    print("Galileo workspace ready")
+    print("Splunk Observability workspace ready")
     print(f"  project:     {state.get('project_name')} ({ids['project_id']})")
     print(f"  log_stream:  {state.get('log_stream_name')} ({ids['log_stream_id']})")
 
@@ -338,7 +338,7 @@ def cmd_llm_check(_: argparse.Namespace) -> None:
     try:
         llm = DevNetLLM.from_env()
         bot = BarryBot(llm)
-        reply = bot.ask("Reply with one short sentence saying BarryBot is ready for Galileo logging.", allow_fallback=False)
+        reply = bot.ask("Reply with one short sentence saying BarryBot is ready for Splunk Observability logging.", allow_fallback=False)
     except DevNetLlmError as exc:
         print(f"DevNet LLM check failed: {exc}")
         raise SystemExit(1)
@@ -609,7 +609,7 @@ def cmd_experiment(args: argparse.Namespace) -> None:
         "baseline_experiment_id": report["variants"]["baseline"]["experiment_id"],
         "candidate_experiment_id": report["variants"]["candidate"]["experiment_id"],
     })
-    print(f"Galileo experiment group: {group_name}")
+    print(f"Splunk Observability experiment group: {group_name}")
     print("variant    action completion  policy compliance  tool selection  tool errors  release")
     for variant in ("baseline", "candidate"):
         row = report["variants"][variant]
@@ -667,7 +667,7 @@ def cmd_agent_demo(_: argparse.Namespace) -> None:
     })
 
     print(f"BarryBot model: {llm.model} ({llm.model_source})")
-    print(f"Galileo session: {session_id}")
+    print(f"Splunk Observability session: {session_id}")
     print("")
     print("BASELINE: unsafe tool path")
     print("  agent -> lookup_order -> issue_refund [403] -> summarize-tool-results")
@@ -794,7 +794,7 @@ def cmd_human_workflows(_: argparse.Namespace) -> None:
             "explanation": "The baseline called the refund tool before authentication and policy checks.",
         },
     )
-    print("Human review recorded in Galileo")
+    print("Human review recorded in Splunk Observability")
     print("  candidate helpfulness: 5/5")
     print("  baseline disposition:   fix before release")
     print("  reviewed evidence:      agent and tool traces")
@@ -871,7 +871,7 @@ def cmd_dashboard(_: argparse.Namespace) -> None:
         if (name.lower(), metric, aggregation, "line_chart") not in stored]
     if missing:
         raise RuntimeError("BarryBot release widgets missing after readback: " + ", ".join(missing))
-    print("BarryBot dashboard configured in Galileo")
+    print("BarryBot dashboard configured in Splunk Observability")
     print(f"  section:       {first_name(section)}")
     print(f"  release widgets: {len(release_widgets)}")
     print(f"  total widgets: {total_widgets}")
@@ -927,7 +927,7 @@ def cmd_guardrail(args: argparse.Namespace) -> None:
         "log_stream_id": ids["log_stream_id"], "traces": traces, "reliable": True,
     }, timeout=60)
     save_state({"last_guardrail_trace_ids": [trace["id"] for trace in traces]})
-    print("Logged both policy decisions in Galileo.")
+    print("Logged both policy decisions in Splunk Observability.")
 
 
 def cmd_agent_name(_: argparse.Namespace) -> None:
@@ -945,7 +945,7 @@ def cmd_run_tests(args: argparse.Namespace) -> None:
     print_findings(report)
     print_ui(report)
     if not report['api_verified']:
-        raise RuntimeError('Galileo is still indexing this run. Click the findings action again to retry the API read.')
+        raise RuntimeError('Splunk Observability is still indexing this run. Click the findings action again to retry the API read.')
     if report['totals']['completed_cases'] != len(report['cases']):
         raise RuntimeError('Some model tests failed. Review their API findings before rerunning the tests.')
 
@@ -969,7 +969,7 @@ def cmd_open_ui(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Galileo DevNet lab helper")
+    parser = argparse.ArgumentParser(description="Splunk Observability DevNet lab helper")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("env").set_defaults(func=cmd_env)
@@ -993,7 +993,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser('compare-tests').set_defaults(func=cmd_compare_tests)
 
     barrybot = sub.add_parser("barrybot")
-    barrybot.add_argument("--ask", default="What should I watch first in Galileo for a production AI assistant?")
+    barrybot.add_argument("--ask", default="What should I watch first in Splunk Observability for a production AI assistant?")
     barrybot.set_defaults(func=cmd_barrybot)
 
     dataset = sub.add_parser("dataset")

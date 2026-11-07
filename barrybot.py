@@ -169,10 +169,10 @@ class BarryBot:
         if "credential" in text or "secret" in text or "private" in text or "password" in text or "support token" in text:
             return "I cannot help expose credentials or private data. Use approved recovery or rotation steps and keep sensitive values out of prompts and logs."
         if "production" in text or "watch" in text:
-            return "Start with trace quality, latency, cost, and safety signals in Galileo. Then compare those runtime traces against evaluation datasets before changing the assistant."
+            return "Start with trace quality, latency, cost, and safety signals in Splunk Observability. Then compare those runtime traces against evaluation datasets before changing the assistant."
         if "evaluate" in text or "dataset" in text:
             return "Use datasets and experiments to compare prompt and model changes against stable examples. Promote changes only when the scores and reviewed traces support the release."
-        return "Use Galileo to connect evaluations, runtime traces, scorers, and human review so BarryBot behavior can be measured and improved."
+        return "Use Splunk Observability to connect evaluations, runtime traces, scorers, and human review so BarryBot behavior can be measured and improved."
 
     def ask(self, prompt: str, *, allow_fallback: bool = True) -> str:
         self.last_messages = [

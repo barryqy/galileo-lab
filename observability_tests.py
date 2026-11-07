@@ -207,21 +207,21 @@ def run_suite(client, ids: dict[str, str], llm, suite: str, *, state_dir: Path, 
     path = state_dir / "runs" / f"{run_id}.json"
     _write_json(path, manifest)
     _write_json(state_dir / "latest_run.json", {"run_id": run_id})
-    print("Uploading traces to Galileo...", flush=True)
+    print("Uploading traces to Splunk Observability...", flush=True)
     result = client.post(f"/v2/projects/{ids['project_id']}/traces", json={"log_stream_id": ids["log_stream_id"],
         "traces": traces, "reliable": True, "include_trace_ids": True})
     if isinstance(result, dict):
         count = result.get("traces_count")
         if count is not None and (type(count) is not int or count != len(traces)):
-            raise RuntimeError("Galileo upload accepted a different trace count; inspect this saved run before retrying.")
+            raise RuntimeError("Splunk Observability upload accepted a different trace count; inspect this saved run before retrying.")
         returned_ids = result.get("trace_ids")
         if returned_ids is not None and (not isinstance(returned_ids, list)
                 or any(not isinstance(value, str) for value in returned_ids)
                 or len(returned_ids) != len(traces) or set(returned_ids) != set(manifest["trace_ids"])):
-            raise RuntimeError("Galileo upload returned different trace IDs; inspect this saved run before retrying.")
+            raise RuntimeError("Splunk Observability upload returned different trace IDs; inspect this saved run before retrying.")
     manifest["upload_status"] = "accepted"
     _write_json(path, manifest)
-    print("Reading these exact trace IDs back from the Galileo API...", flush=True)
+    print("Reading these exact trace IDs back from the Splunk Observability API...", flush=True)
     return report_findings(client, state_dir=state_dir, run_id=run_id)
 
 
@@ -286,17 +286,17 @@ def _case_findings(trace, saved, manifest):
     if agent_name is not None and (metadata.get("agent_name") != agent_name
             or agent_name not in (trace.get("tags") or [])
             or trace.get("name") != f"{agent_name}-lab-{manifest['run_id']}-{saved['case']}"):
-        raise ValueError("Galileo trace agent does not match the saved run")
+        raise ValueError("Splunk Observability trace agent does not match the saved run")
     if (trace.get("id") != saved["trace_id"] or metadata.get("run_id") != manifest["run_id"]
             or metadata.get("suite") != manifest["suite"] or metadata.get("case") != saved["case"]):
-        raise ValueError("Galileo trace does not match the saved run")
+        raise ValueError("Splunk Observability trace does not match the saved run")
     stream = trace.get("log_stream_id")
     if stream is not None and stream != manifest["destination"]["log_stream_id"]:
-        raise ValueError("Galileo trace destination does not match the saved run")
+        raise ValueError("Splunk Observability trace destination does not match the saved run")
     for key, expected in (("project_id", manifest["destination"]["project_id"]),
             ("run_id", manifest["destination"]["log_stream_id"])):
         if trace.get(key) is not None and trace[key] != expected:
-            raise ValueError("Galileo trace destination does not match the saved run")
+            raise ValueError("Splunk Observability trace destination does not match the saved run")
     row.update(status=metadata.get("status", "unknown"), pii_input=_labels(metadata.get("pii_input")),
         pii_output=_labels(metadata.get("pii_output")), session_id=trace.get("session_id"))
     duration = _number((trace.get("metrics") or {}).get("duration_ns"))
@@ -306,10 +306,10 @@ def _case_findings(trace, saved, manifest):
     for span in trace.get("spans", []):
         span_metadata = span.get("user_metadata") or {}
         if agent_name is not None and span_metadata.get("agent_name") != agent_name:
-            raise ValueError("Galileo span agent does not match the saved run")
+            raise ValueError("Splunk Observability span agent does not match the saved run")
         if (span_metadata.get("run_id") != manifest["run_id"]
                 or span_metadata.get("suite") != manifest["suite"] or span_metadata.get("case") != saved["case"]):
-            raise ValueError("Galileo span does not match the saved run")
+            raise ValueError("Splunk Observability span does not match the saved run")
         metrics = span.get("metrics") or {}
         duration = _number(metrics.get("duration_ns"))
         if span.get("type") == "tool":
@@ -350,16 +350,16 @@ def report_findings(client, *, state_dir: Path, run_id: str | None = None) -> di
     for key in ("model_ms", "model_wait_ms", "tool_ms", "total_ms", "request_count", "cost_usd", *TOKEN_FIELDS):
         values = [row[key] for row in rows]
         totals[key] = sum(values) if all(value is not None for value in values) else None
-    cost_reason = "Galileo cost is unavailable or not successfully computed. Provider tariff unavailable; no monetary cost is inferred from token counts."
+    cost_reason = "Splunk Observability cost is unavailable or not successfully computed. Provider tariff unavailable; no monetary cost is inferred from token counts."
     if totals["cost_usd"] is not None:
         cost_reason = "Sum of successful cost results on unique LLM spans; trace rollups are excluded."
     elif any(row["cost_usd"] is not None for row in rows):
-        cost_reason = "Galileo cost is unavailable for some model spans; the total is unavailable. No tariff-based estimate is substituted."
+        cost_reason = "Splunk Observability cost is unavailable for some model spans; the total is unavailable. No tariff-based estimate is substituted."
     report = {"run_id": manifest["run_id"], "suite": manifest["suite"], "destination": destination,
         "trace_ids": manifest["trace_ids"], "cases": rows, "totals": totals, "retrieved_at": _now(),
         "api_verified": all(row["status"] != "pending" for row in rows),
-        "pii_source": "Application code: local pattern check for email/phone, not Galileo PII classifier",
-        "cost_source": "Galileo-reported model cost; not DevNet billing", "cost_reason": cost_reason}
+        "pii_source": "Application code: local pattern check for email/phone, not Splunk Observability PII classifier",
+        "cost_source": "Splunk Observability-reported model cost; not DevNet billing", "cost_reason": cost_reason}
     if "agent_name" in manifest:
         report["agent_name"] = manifest["agent_name"]
     _write_json(state_dir / "runs" / f"{manifest['run_id']}-findings.json", report)
@@ -379,7 +379,7 @@ def _usd(value):
 def print_findings(report: dict) -> None:
     if report.get("agent_name"):
         print(f"Your agent: {report['agent_name']}")
-    print(f"Galileo API findings | {report['suite']} | run {report['run_id']}")
+    print(f"Splunk Observability API findings | {report['suite']} | run {report['run_id']}")
     print(f"Exact traces read back: {sum(row['status'] != 'pending' for row in report['cases'])}/{len(report['cases'])}")
     for row in report["cases"]:
         pii = "unavailable"
@@ -409,7 +409,7 @@ def _print_ui_links(report: dict) -> None:
     destination = report["destination"]
     url = (f"{destination['console_url']}/project/{quote(destination['project_id'], safe='')}/"
         f"agent-streams/{quote(destination['log_stream_id'], safe='')}")
-    print(f"Galileo UI: {url}")
+    print(f"Splunk Observability UI: {url}")
     first = report["cases"][0] if report["cases"] else {}
     if first.get("session_id") and first.get("llm_span_id"):
         query = urlencode({"traceId": first["trace_id"], "tabView": "conversation", "spanId": first["llm_span_id"]})

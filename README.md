@@ -1,6 +1,6 @@
-# Galileo DevNet Lab Helper
+# Splunk Observability DevNet Lab Helper
 
-Run support tests, inspect token use, delay, and fictional private-data findings through the API, and find the same records in Galileo.
+Run support tests, inspect token use, delay, and fictional private-data findings through the API, and find the same records in Splunk Observability.
 
 ## Quick Start
 
@@ -47,9 +47,9 @@ Run the efficient batch next, followed by `findings`, `compare-tests`, and, with
 ### Reading Measurements
 
 - Token counts come from provider usage. Missing usage stays unavailable.
-- Model cost is Galileo-reported when computed. Missing or pending cost stays unavailable; the reported value is not actual DevNet billing. The helper does not infer cost from a hardcoded tariff.
-- Model time and application time are separate. The baseline's controlled local retrieval delay demonstrates application waiting, not Galileo network latency.
-- The privacy batch supplies fictional contact data and a clean control. Its email/phone rule detects patterns in input/output; it does not redact or block. It is not a Galileo PII scorer and does not cover every form of sensitive information.
+- Model cost is Splunk Observability-reported when computed. Missing or pending cost stays unavailable; the reported value is not actual DevNet billing. The helper does not infer cost from a hardcoded tariff.
+- Model time and application time are separate. The baseline's controlled local retrieval delay demonstrates application waiting, not Splunk Observability network latency.
+- The privacy batch supplies fictional contact data and a clean control. Its email/phone rule detects patterns in input/output; it does not redact or block. It is not a Splunk Observability PII scorer and does not cover every form of sensitive information.
 - Match your agent name and exact run/trace IDs in API/UI comparisons. Check aggregation scope and units before comparing a chart with one API row.
 - Agent names are assigned once per local state directory and are retained across baseline, efficient, and privacy batches. Earlier saved runs without names remain readable.
 
@@ -59,22 +59,22 @@ The guide uses `source 0-init-lab.sh workshop` for the Workshop destination:
 
 | Setting | Destination |
 | --- | --- |
-| Galileo API | `https://api.multitenant.galileocloud.io` |
+| Splunk Observability API | `https://api.multitenant.galileocloud.io` |
 | Workshop session API | `https://o11y.barrysecure.com/v1/galileo/proxy` |
 | Console | `https://console.multitenant.galileocloud.io/workshop` |
 | Project | **AI Observability Lab**, `2e652072-412e-4bef-97a5-1a8f4dc5b68e` |
 | Stream | **ai-observability-lab**, `9ac1ae85-1c47-4447-8050-df5fbb5b2ae6` |
 | Local state | `.galileo/workshop` |
 
-Workshop initialization connects through the Barrysecure gateway. Learners open the printed Connect link once and use an individual invitation from the instructor. No Galileo API key, Cisco password or model-service credential is sent to Barrysecure. API access tokens last up to one hour and renew automatically while the instructor's workshop grant remains valid. Re-sourcing `source 0-init-lab.sh workshop` checks and renews the existing connection. If that connection has been revoked or expired, setup offers a fresh Connect link. If a connection is lost, run setup again; a valid browser connection can reconnect without another invitation.
+Workshop initialization connects through the Barrysecure gateway. Learners open the printed Connect link once and use an individual invitation from the instructor. No Splunk Observability API key, Cisco password or model-service credential is sent to Barrysecure. API access tokens last up to one hour and renew automatically while the instructor's workshop grant remains valid. Re-sourcing `source 0-init-lab.sh workshop` checks and renews the existing connection. If that connection has been revoked or expired, setup offers a fresh Connect link. If a connection is lost, run setup again; a valid browser connection can reconnect without another invitation.
 
-The gateway connection and the Workshop Viewer login are separate. Connecting enables the test commands; use your own Workshop Viewer account to inspect the same results in Galileo.
+The gateway connection and the Workshop Viewer login are separate. Connecting enables the test commands; use your own Workshop Viewer account to inspect the same results in Splunk Observability.
 
-Session credentials stay in `GALILEO_LAB_SESSION_TOKEN` and `GALILEO_LAB_SESSION_RENEWAL_TOKEN`, with the destination in `GALILEO_LAB_GATEWAY_URL`. They are never used with the native Galileo API. The helper does not save credentials to disk. A failed command can renew an established connection once; it never starts another interactive Connect flow. If an upload cannot be replayed safely, reopen its source and rerun the command.
+Session credentials stay in `GALILEO_LAB_SESSION_TOKEN` and `GALILEO_LAB_SESSION_RENEWAL_TOKEN`, with the destination in `GALILEO_LAB_GATEWAY_URL`. They are never used with the native Splunk Observability API. The helper does not save credentials to disk. A failed command can renew an established connection once; it never starts another interactive Connect flow. If an upload cannot be replayed safely, reopen its source and rerun the command.
 
 The existing DevNet gateway remains available through explicit `GALILEO_LAB_BOOTSTRAP_URL=https://devnet.cisco.com/v1/devenv-community/galileo/sessions` (or the corresponding `devnet-testing.cisco.com` URL). This mode uses existing `DEVENV_USER` and `DEVENV_PASSWORD` only on those trusted Cisco hosts. Previously configured DevNet session descriptors remain supported. `LLM_BASE_URL` alone does not select the DevNet gateway during new Workshop setup.
 
-Preloaded `GALILEO_API_KEY` remains supported in every profile and takes precedence over temporary sessions, retaining the native Galileo destination even when obsolete seed-URL variables are present. A native key with an explicit native `GALILEO_API_BASE_URL` can also read earlier saved runs from that destination. Saved runs remain bound to their original API destination. Anonymous credential fetching, including the former Pastebin default and all `GALILEO_*KEY_SEED_URL` sources, has been removed. A Workshop configuration containing only `GALILEO_WORKSHOP_KEY_SEED_URL` fails without fetching the URL or falling back to Connect. Stop on initialization failure. Do not store raw credentials in this repository.
+Preloaded `GALILEO_API_KEY` remains supported in every profile and takes precedence over temporary sessions, retaining the native Splunk Observability destination even when obsolete seed-URL variables are present. A native key with an explicit native `GALILEO_API_BASE_URL` can also read earlier saved runs from that destination. Saved runs remain bound to their original API destination. Anonymous credential fetching, including the former Pastebin default and all `GALILEO_*KEY_SEED_URL` sources, has been removed. A Workshop configuration containing only `GALILEO_WORKSHOP_KEY_SEED_URL` fails without fetching the URL or falling back to Connect. Stop on initialization failure. Do not store raw credentials in this repository.
 
 For direct API workshops, provide one shared, project-scoped Editor key through the approved runtime secret mechanism; individual runtime keys are not required. Rotate or revoke it only after the whole cohort finishes. Use fresh learner pods without stale `.env` or `lab.env` settings: initialization retains its existing `.env` precedence. Viewer sign-in remains separate, and API key rotation does not delete saved results.
 
@@ -117,7 +117,7 @@ All original commands remain available. They use a separate refund scenario with
 | `human-workflows` | Attach sample ratings and annotations to refund traces |
 | `dashboard` | Configure refund release-metric widgets |
 | `trends` | Inspect stored trend sections and widgets |
-| `scorers` | List visible Galileo scorers |
+| `scorers` | List visible Splunk Observability scorers |
 | `integrations` | List visible integrations |
 | `capabilities` | Inspect the bundled API catalog |
 | `outcomes` | Inspect the capability-to-outcome mapping |
@@ -138,7 +138,7 @@ python3 galileo_lab.py dashboard || exit 1
 python3 galileo_lab.py trends
 ```
 
-Refund experiments replay simulated tools without additional model calls. The helper calculates and uploads their application metrics. The gate reads the saved report and applies local thresholds. Galileo scorers must be enabled separately.
+Refund experiments replay simulated tools without additional model calls. The helper calculates and uploads their application metrics. The gate reads the saved report and applies local thresholds. Splunk Observability scorers must be enabled separately.
 
 The Agent Control credential-term regex allows the safe model call once and denies a matching request with zero protected calls. Both decisions are logged. Benign requests containing its terms can match and paraphrases can pass. This is separate from the email/phone check, not a general PII detector.
 
@@ -150,7 +150,7 @@ Human-review commands record sample ratings rather than independent judgments. A
 
 - `0-init-lab.sh` selects the destination and prepares the session.
 - `barrybot.py` calls the model supplied by the lab.
-- `galileo_client.py` provides the Galileo REST client.
+- `galileo_client.py` provides the Splunk Observability REST client.
 - `galileo_lab.py` provides the CLI commands.
 - `support_agent.py` defines simulated refund paths, application metrics, and traces.
 - `samples/eval_cases.csv` contains refund evaluation cases.
