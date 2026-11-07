@@ -4,7 +4,7 @@ Run support tests, inspect token use, delay, and fictional private-data findings
 
 ## Quick Start
 
-An instructor-enabled lab session is required. During first setup, open the Connect link printed in the terminal and enter the invitation supplied by your instructor. Keep the terminal running until it reports that the session is ready. Later commands reuse the connection. Use the setup block in the DevNet guide or this block in the configured lab environment:
+During first setup, open the Connect link printed in the terminal and select **Connect lab**. Keep the terminal running; the tests continue automatically. Later commands reuse the connection. Use the setup block in the DevNet guide or this block in the configured lab environment:
 
 ```bash
 cd /home/developer/src || exit 1
@@ -66,7 +66,7 @@ The guide uses `source 0-init-lab.sh workshop` for the Workshop destination:
 | Stream | **ai-observability-lab**, `9ac1ae85-1c47-4447-8050-df5fbb5b2ae6` |
 | Local state | `.galileo/workshop` |
 
-Workshop initialization connects through the Barrysecure gateway. Learners open the printed Connect link once and use an individual invitation from the instructor. No Splunk Observability API key, Cisco password or model-service credential is sent to Barrysecure. API access tokens last up to one hour and renew automatically while the instructor's workshop grant remains valid. Re-sourcing `source 0-init-lab.sh workshop` checks and renews the existing connection. If that connection has been revoked or expired, setup offers a fresh Connect link. If a connection is lost, run setup again; a valid browser connection can reconnect without another invitation.
+Workshop initialization connects through the Barrysecure gateway. Learners open the printed Connect link once and select **Connect lab**. No Splunk Observability API key, Cisco password or model-service credential is sent to Barrysecure. API access tokens last up to one hour and renew automatically while the workshop session remains valid. New code-free sessions last up to three hours and cannot extend beyond the configured workshop window. Re-sourcing `source 0-init-lab.sh workshop` checks and renews the existing connection. If that connection has been revoked or expired, setup offers a fresh Connect link. If a connection is lost, run setup again; a valid browser connection can reconnect without extending its original expiry.
 
 The gateway connection and the Workshop Viewer login are separate. Connecting enables the test commands; use your own Workshop Viewer account to inspect the same results in Splunk Observability.
 
@@ -78,7 +78,7 @@ Preloaded `GALILEO_API_KEY` remains supported in every profile and takes precede
 
 For direct API workshops, provide one shared, project-scoped Editor key through the approved runtime secret mechanism; individual runtime keys are not required. Rotate or revoke it only after the whole cohort finishes. Use fresh learner pods without stale `.env` or `lab.env` settings: initialization retains its existing `.env` precedence. Viewer sign-in remains separate, and API key rotation does not delete saved results.
 
-Provide each learner an individual gateway invitation with an explicit workshop expiry before offering the exercises. Give each learner an individual organization Read-only identity with Viewer access to AI Observability Lab, and verify sign-in separately. A Viewer login permits UI exploration; it does not supply the runtime ingestion credential. The helper does not create identities or grants. Learners without viewer access can complete the API path once their API session is enabled.
+Enable code-free Connect for the workshop window before offering the exercises. Set `OPEN_ADMISSION_ENABLED=true` and an explicit RFC 3339 `OPEN_ADMISSION_UNTIL` on the gateway. The gateway admits up to 100 active automatic grants by default; the operator can configure this with `OPEN_ADMISSION_MAX_ACTIVE`. Give each learner an individual organization Read-only identity with Viewer access to AI Observability Lab, and verify sign-in separately. A Viewer login permits UI exploration; it does not supply the runtime ingestion credential. The helper does not create identities or grants. Learners without viewer access can complete the API path once their API session is enabled.
 
 Use an individual UI identity for each learner so they can keep their own signed-in session.
 

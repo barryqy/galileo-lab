@@ -230,8 +230,8 @@ def connect_session(environ):
         if not 0 < seconds <= 630:
             raise ValueError('invalid connection expiry')
         deadline = min(deadline, time.monotonic() + seconds)
-        print('Connect this lab once in your browser:\n' + expected_link, file=sys.stderr)
-        print('Waiting for Connect to finish...', file=sys.stderr)
+        print('Connect this lab once: open the link and select Connect lab.\n' + expected_link, file=sys.stderr)
+        print('Your tests will continue automatically after connecting.', file=sys.stderr)
         while time.monotonic() < deadline:
             try:
                 poll = _connect_post('/connections/' + request_id + '/poll', deadline,
