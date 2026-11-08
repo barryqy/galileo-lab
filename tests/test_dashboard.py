@@ -122,7 +122,7 @@ class DashboardTests(unittest.TestCase):
                 with patch("sys.argv", ["galileo_lab.py", "dashboard"]):
                     with contextlib.redirect_stdout(output):
                         self.assertEqual(galileo_lab.main(), 1)
-        self.assertIn("widgets missing after readback: Action completion", output.getvalue())
+        self.assertIn("widgets missing from saved configuration: Action completion", output.getvalue())
         self.assertNotIn("dashboard configured", output.getvalue())
 
 

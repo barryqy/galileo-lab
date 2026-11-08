@@ -56,7 +56,7 @@ class GuidedTests(unittest.TestCase):
         self.assertIn('Purpose:', output)
         self.assertIn('Readiness:', output)
         self.assertIn('Tokens:', output)
-        self.assertIn('Exact traces read back: 3/3', output)
+        self.assertIn('Saved traces available: 3/3', output)
 
     def test_guided_findings_retains_missing_values_and_warnings(self):
         report = self.run_suite('baseline')

@@ -88,6 +88,52 @@ class DevNetLLM:
         model, source = _choose_model(models, requested_model)
         return cls(base_url, api_key, model, source, models)
 
+    def chat_step(self, messages, *, tools, max_tokens=220):
+        """Make one real model call that may select a support tool."""
+        self.last_completion_metadata = {}
+        started = time.perf_counter_ns()
+        created = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        payload = {'model': self.model, 'messages': messages, 'temperature': 0.2,
+            'max_tokens': max_tokens, 'tools': tools, 'tool_choice': 'auto'}
+        for attempt in range(3):
+            attempt_started = time.perf_counter_ns()
+            response = requests.post(f'{self.base_url}/chat/completions', json=payload,
+                headers={'Authorization': f'Bearer {self.api_key}', 'Content-Type': 'application/json'}, timeout=60)
+            try:
+                response.raise_for_status()
+                break
+            except requests.HTTPError:
+                if response.status_code not in (429, 500, 502, 503, 504) or attempt == 2:
+                    raise
+                retry_after = response.headers.get('Retry-After', '')
+                delay = int(retry_after) if retry_after.isdigit() else attempt + 1
+                time.sleep(min(delay, 5))
+        data = response.json()
+        try:
+            choice = data['choices'][0]
+            message = choice['message']
+        except (KeyError, IndexError, TypeError) as exc:
+            raise DevNetLlmError('DevNet LLM returned no assistant message') from exc
+        if not isinstance(message, dict) or message.get('role') != 'assistant':
+            raise DevNetLlmError('DevNet LLM returned an invalid assistant message')
+        if not message.get('tool_calls') and not (isinstance(message.get('content'), str) and message['content'].strip()):
+            raise DevNetLlmError('DevNet LLM returned neither an answer nor a tool call')
+        duration = time.perf_counter_ns() - started
+        metadata = {'created_at': created, 'duration_ns': time.perf_counter_ns() - attempt_started,
+            'total_duration_ns': duration, 'request_count': attempt + 1, 'requested_model': self.model,
+            'model': data.get('model') if isinstance(data.get('model'), str) and data['model'] else self.model}
+        if isinstance(choice.get('finish_reason'), str):
+            metadata['finish_reason'] = choice['finish_reason']
+        usage = data.get('usage')
+        if isinstance(usage, dict):
+            for source, target in (('prompt_tokens', 'num_input_tokens'),
+                    ('completion_tokens', 'num_output_tokens'), ('total_tokens', 'num_total_tokens')):
+                value = usage.get(source)
+                if type(value) is int and value >= 0:
+                    metadata[target] = value
+        self.last_completion_metadata = metadata
+        return message
+
     def complete(self, messages: List[Dict[str, str]], *, max_tokens: int = 220) -> str:
         self.last_completion_metadata = {}
         call_started = time.perf_counter_ns()

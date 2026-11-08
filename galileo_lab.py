@@ -697,7 +697,7 @@ def cmd_agent_demo(args: argparse.Namespace) -> None:
     print("")
     print("CANDIDATE: policy-aware tool path")
     print("  agent -> lookup_order -> check_refund_policy -> escalate_case [200] -> summarize-tool-results")
-    print("  finding: BarryBot verified policy and routed the exception for review")
+    print("  finding: BarryBot checked policy and routed the exception for review")
     print("")
     for run in runs:
         print(f"{run['variant']} summary source: {run['response_metadata']['response_source']}")
@@ -828,7 +828,7 @@ def cmd_human_workflows(args: argparse.Namespace) -> None:
     print("Human review recorded in Splunk Observability")
     print("  candidate helpfulness: 5/5")
     print("  baseline disposition:   fix before release")
-    print("  reviewed evidence:      agent and tool traces")
+    print("  reviewed records:      agent and tool traces")
 
 
 def cmd_trends(args: argparse.Namespace) -> None:
@@ -858,7 +858,7 @@ def section_widgets(trends: Dict[str, Any], section_id: str) -> List[Dict[str, A
 
 
 def cmd_dashboard(args: argparse.Namespace) -> None:
-    guided_purpose(args, 'Configure and verify four application metric widgets for release review.')
+    guided_purpose(args, 'Configure and inspect four application metric widgets for release review.')
     client = client_or_exit()
     ids = ensure_project_and_stream(client)
     base = f"/v2/projects/{ids['project_id']}/log_streams/{ids['log_stream_id']}/trends"
@@ -904,7 +904,7 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
     missing = [name for name, metric, aggregation in desired
         if (name.lower(), metric, aggregation, "line_chart") not in stored]
     if missing:
-        raise RuntimeError("BarryBot release widgets missing after readback: " + ", ".join(missing))
+        raise RuntimeError("BarryBot release widgets missing from saved configuration: " + ", ".join(missing))
     save_navigation(STATE_DIR, 'dashboard', client, ids, section_id=section_id, name=first_name(section))
     print("BarryBot dashboard configured in Splunk Observability")
     print(f"  section:       {first_name(section)}")

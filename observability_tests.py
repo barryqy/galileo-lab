@@ -221,7 +221,7 @@ def run_suite(client, ids: dict[str, str], llm, suite: str, *, state_dir: Path, 
             raise RuntimeError("Splunk Observability upload returned different trace IDs; inspect this saved run before retrying.")
     manifest["upload_status"] = "accepted"
     _write_json(path, manifest)
-    print("Reading these exact trace IDs back from the Splunk Observability API...", flush=True)
+    print("Reading saved traces from the Splunk Observability API...", flush=True)
     return report_findings(client, state_dir=state_dir, run_id=run_id)
 
 
@@ -382,7 +382,7 @@ def print_findings(report: dict, *, guided=False) -> None:
     print(f"Splunk Observability API findings | {report['suite']} | run {report['run_id']}")
     if guided:
         print("Readiness: " + ("exact traces available" if report["api_verified"] else "still indexing; retry findings"))
-    print(f"Exact traces read back: {sum(row['status'] != 'pending' for row in report['cases'])}/{len(report['cases'])}")
+    print(f"Saved traces available: {sum(row['status'] != 'pending' for row in report['cases'])}/{len(report['cases'])}")
     for row in report["cases"]:
         pii = "unavailable"
         if row["pii_input"] is not None and row["pii_output"] is not None:

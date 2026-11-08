@@ -1,10 +1,10 @@
 # Splunk Observability DevNet Lab Helper
 
-Run support tests, inspect token use, delay, and fictional private-data findings through the API, and find the same records in Splunk Observability.
+Run a real support agent, inspect its JSON trace and OpenTelemetry spans, and explore the same request in Splunk Observability.
 
 ## Quick Start
 
-Click the play button in the guide to prepare the lab and run the tests. Setup connects automatically, and later commands reuse the session. Use the setup block in the DevNet guide or this block in the configured lab environment:
+Use the setup block in the DevNet guide or this block in the configured lab environment. Setup installs dependencies and connects; it does not call the model. Later commands reuse the session:
 
 ```bash
 cd /home/developer/src || exit 1
@@ -16,29 +16,75 @@ python3 -m pip install uv --disable-pip-version-check || exit 1
 if [ ! -x .venv/bin/python ]; then python3 -m uv venv --python 3.12 .venv || exit 1; fi
 python3 -m uv pip install --python .venv/bin/python -r requirements.txt || exit 1
 source 0-init-lab.sh workshop || exit 1
-python3 galileo_lab.py run-tests --suite baseline
 ```
 
-Watch the cases run. The first batch assigns a random agent name and reuses it for later batches in this lab session. Keep the agent name and run ID, then read the saved results before opening the UI:
+Open `workshop_app.py` in the editor. Read `QUESTION`, `TOP_K`, and `MAX_TOKENS`, then run the visible application:
 
 ```bash
-cd /home/developer/src/galileo-lab || exit 1
-source 0-init-lab.sh workshop >/dev/null || exit 1
-python3 galileo_lab.py findings || exit 1
-python3 galileo_lab.py open-ui
+python3 workshop_app.py
+python3 workshop_results.py json
+python3 workshop_results.py open --view trace
 ```
 
-After setup, run `player` anytime to show your saved agent name in bold green, including from another directory. It reuses the current lab profile and needs no API login or model call. `python3 galileo_lab.py player` also works from the lab directory.
+The model selects the `search_support_notes` tool, supplies its search query, and receives actual keyword search results from the small Markdown files in `support_docs/`. It can then answer or search again, up to three model rounds. The documents are supplied teaching material; the model calls, selected tool arguments, search work, and answers are real. A model or tool failure stops the request without a canned answer.
 
-Sign in to Workshop with your own instructor-provided Viewer account. Open the displayed stream link, search for your agent name, then select the exact run and trace IDs shown by the API. Classmates can see the same synthetic traces; agent names help you find results and do not restrict access. Learners without UI access can still complete the API exercises.
+The JSON is the actual payload saved for that request. Its root contains an agent node and the model calls. Open `--view agent` to explore the shared stream’s Agent graph; use Traces to inspect one request. `workshop_results.py` only reads saved requests and the API; it never calls the model.
 
-Run the efficient batch next, followed by `findings`, `compare-tests`, and, with viewer access, `open-ui`. Then run the privacy batch and inspect it with `findings` and `open-ui`. These read commands do not make another model call.
+### Add a retrieval span
+
+The OpenTelemetry SDK creates the root `answer-question`, child `support-agent`, and model spans. In the nested retrieval function, uncomment this line and run the app again:
+
+```python
+@tracer.start_as_current_span("retrieve-documents")
+```
+
+The actual local search now appears as its own SDK span under the agent. Before this edit, the search still runs but has no separate span. The app uses an explicit `TracerProvider`, a Resource with `service.name`, `TrackSpans` to notice unfinished work, and `SimpleSpanProcessor` to send ended spans to `WorkshopExporter`. It flushes and shuts down the provider after the request.
+
+The custom exporter converts those genuine SDK spans to the Workshop JSON trace API. It does not send OTLP or use a Collector. In a deployment with an approved OTLP endpoint, the same instrumentation could use an OTLP exporter directly or through a Collector. SDK trace/span IDs remain in `otel.*` metadata; separate UUID4 IDs identify native console records.
+
+```bash
+python3 workshop_results.py inspect
+python3 workshop_results.py open --view tokens
+python3 workshop_results.py open --view latency
+```
+
+Edit only `TOP_K`, run the same question again, and compare:
+
+```bash
+python3 workshop_app.py
+python3 workshop_results.py compare
+```
+
+Keep the question, model, destination and `MAX_TOKENS` the same. Comparisons show actual selected document names/counts, SDK duration and provider usage summed across model calls. Model calls can retry transient HTTP errors up to three attempts; failed-attempt token usage remains unknown. Missing usage stays unavailable. Fewer documents do not guarantee a faster or better answer; read both responses for adequacy.
+
+For the privacy exercise, use fictional contact details:
+
+```bash
+python3 workshop_app.py --question 'How should support handle fictional contact alex@example.com and +1 202-555-0147?'
+python3 workshop_results.py open --view privacy
+```
+
+Inspect parent metadata `pii_input`, `pii_output` and `pii_detector`. The email/phone pattern check records matches; it does not redact, block, or detect every form of personal information.
+
+Use `inspect --local` to read local results without API access, `inspect --run UUID` for a specific saved request, and `json --run UUID` to inspect that request's actual upload payload. `open --view response|trace|agent|tokens|latency|privacy` prints one console URL. Privacy selects a request containing contact patterns; other views select the latest successful model request. If records are still indexing, retry `inspect` instead of repeating the model call. `workshop_app.py --details` also shows the local run and native record IDs.
+
+The app reuses your existing player identity and destination. New results live under the selected profile's `otel/runs/`; the original suite state and measurements stay separate. Run `player` anytime after setup to show your persistent agent name. Sign in to Workshop with your instructor-provided Viewer account to explore the same records in the UI. API-only learners can use `json` and `inspect`.
+
+## Supplemental controlled suites
+
+All original commands and three profiles remain available. The controlled baseline/efficient suites use supplied questions, repeated reference text, and intentional local retrieval delays to illustrate differences. Their inputs and timing controls differ from the visible support agent above. Run them explicitly when you want those reference exercises:
+
+```bash
+python3 galileo_lab.py run-tests --suite baseline
+python3 galileo_lab.py findings
+python3 galileo_lab.py open-ui
+```
 
 | Command | Purpose |
 | --- | --- |
 | `player` | Show the same persistent agent name in bold green; available in the shell after setup |
 | `agent-name` | Show the persistent name assigned to this lab environment; no API login required |
-| `run-tests --suite baseline` | Run initial support cases and save evidence |
+| `run-tests --suite baseline` | Run initial support cases and save results |
 | `run-tests --suite efficient` | Reduce repeated context and limit answer length on the same cases |
 | `run-tests --suite privacy` | Exercise a local email/phone check with fictional data |
 | `findings` | Read the latest test run through the API |
@@ -81,11 +127,11 @@ Preloaded `GALILEO_API_KEY` remains supported in every profile and takes precede
 
 For direct API workshops, provide one shared, project-scoped Editor key through the approved runtime secret mechanism; individual runtime keys are not required. Rotate or revoke it only after the whole cohort finishes. Use fresh learner pods without stale `.env` or `lab.env` settings: initialization retains its existing `.env` precedence. Viewer sign-in remains separate, and API key rotation does not delete saved results.
 
-Enable code-free Connect for the workshop window before offering the exercises. Set `AUTO_CONNECT_ENABLED=true`, `OPEN_ADMISSION_ENABLED=true` and an explicit RFC 3339 `OPEN_ADMISSION_UNTIL` on the gateway. The gateway admits up to 100 active automatic grants by default; the operator can configure this with `OPEN_ADMISSION_MAX_ACTIVE`. Give each learner an individual organization Read-only identity with Viewer access to AI Observability Lab, and verify sign-in separately. A Viewer login permits UI exploration; it does not supply the runtime ingestion credential. The helper does not create identities or grants. Learners without viewer access can complete the API path once their API session is enabled.
+Enable code-free Connect for the workshop window before offering the exercises. Set `AUTO_CONNECT_ENABLED=true`, `OPEN_ADMISSION_ENABLED=true` and an explicit RFC 3339 `OPEN_ADMISSION_UNTIL` on the gateway. The gateway admits up to 100 active automatic grants by default; the operator can configure this with `OPEN_ADMISSION_MAX_ACTIVE`. Give each learner an individual organization Read-only identity with Viewer access to AI Observability Lab, and check sign-in separately. A Viewer login permits UI exploration; it does not supply the runtime ingestion credential. The helper does not create identities or grants. Learners without viewer access can complete the API path once their API session is enabled.
 
 Use an individual UI identity for each learner so they can keep their own signed-in session.
 
-Before the workshop, check a fresh learner environment: the first play action should complete a baseline batch, and the learner should be able to open AI Observability Lab with their Viewer account.
+Before the workshop, check a fresh learner environment: setup should connect without a model call, then the visible app should complete a support request, and the learner should be able to open AI Observability Lab with their Viewer account.
 
 The older profiles remain supported with their existing settings:
 

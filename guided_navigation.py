@@ -1,4 +1,4 @@
-"""Saved-evidence navigation for the guided lessons."""
+"""Saved-results navigation for the guided lessons."""
 
 import json
 import os
@@ -113,7 +113,7 @@ def _batch_checkpoint(client, state_dir, checkpoint, run_id):
             if saved.get('suite') == suite and saved.get('upload_status') == 'accepted':
                 candidates.append(saved)
         if not candidates:
-            raise ValueError(f'No saved {suite} evidence. Run run-tests --suite {suite} --guided first.')
+            raise ValueError(f'No saved {suite} records. Run run-tests --suite {suite} --guided first.')
         manifest = max(candidates, key=lambda item: item['created_at'])
     report = report_findings(client, state_dir=state_dir, run_id=manifest['run_id'])
     case_name = 'fictional-contact' if suite == 'privacy' else 'monitor'
@@ -122,7 +122,7 @@ def _batch_checkpoint(client, state_dir, checkpoint, run_id):
         raise ValueError(f'Saved {suite} run is missing its {case_name} case')
     url = _stream_url(report['destination'])
     target = _trace_url(url, row, model=view != 'metadata')
-    ready = 'API evidence available' if row['status'] != 'pending' else 'Still indexing; retry findings --guided, without rerunning tests'
+    ready = 'API results available' if row['status'] != 'pending' else 'Still indexing; retry findings --guided, without rerunning tests'
     if row['status'] not in ('completed', 'pending'):
         ready = f"Trace status: {row['status']}; a model answer may be unavailable"
     if target == url:
@@ -152,7 +152,7 @@ def print_checkpoint(client, *, state_dir, checkpoint, run_id=None):
     records = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     saved = records.get(feature)
     if not saved:
-        raise ValueError(f'No saved {feature} navigation evidence. Run {feature} --guided first.')
+        raise ValueError(f'No saved {feature} navigation records. Run {feature} --guided first.')
     destination = saved['destination']
     if client.base_url.rstrip('/') != destination['api_base_url']:
         raise ValueError('Current API destination differs from this saved feature')
@@ -188,7 +188,7 @@ def print_checkpoint(client, *, state_dir, checkpoint, run_id=None):
         if feature == 'dashboard':
             markers += f" | section: {saved['name']} ({saved['section_id']})"
             instruction += ' Find BarryBot release readiness and its four application metric widgets.'
-        _show(url, 'Stream / Trends', instruction, markers, 'Configuration read back; metric availability depends on indexed evidence and selected time range')
+        _show(url, 'Stream / Trends', instruction, markers, 'Saved configuration; metric availability depends on stored measurements and selected time range')
         return
     if feature in ('barrybot', 'log-traces'):
         label = checkpoint
@@ -211,12 +211,12 @@ def print_checkpoint(client, *, state_dir, checkpoint, run_id=None):
         label = checkpoint.split('-', 1)[1] if feature == 'agent-demo' else 'candidate'
         row = saved.get('cases', {}).get(label)
         if not row:
-            raise ValueError(f'No saved {label} evidence. Run {feature} --guided first.')
+            raise ValueError(f'No saved {label} records. Run {feature} --guided first.')
         view = 'Refund agent / trace' if feature == 'agent-demo' else 'Authored sample review / candidate trace'
         instruction = ('Inspect lookup_order, policy checks and refund/escalation tools; these tools are simulated.' if feature == 'agent-demo'
             else 'Inspect helpfulness 5/5 on this candidate and the saved baseline disposition. These are authored example ratings, not collected learner feedback.')
     trace_id = row['trace_id']
-    readiness = 'Exact trace read back'
+    readiness = 'Saved trace available'
     try:
         trace = client.get(f"/v2/projects/{destination['project_id']}/traces/{trace_id}")
     except GalileoApiError as exc:
@@ -238,7 +238,7 @@ def print_checkpoint(client, *, state_dir, checkpoint, run_id=None):
             zero_calls = type(calls) in (int, str) and str(calls) == '0'
             if decision == 'DENY' and (not zero_calls
                     or any(span.get('type') == 'llm' for span in trace.get('spans') or [])):
-                raise ValueError('DENY evidence contains protected model execution')
+                raise ValueError('DENY records contains protected model execution')
         row = dict(row, session_id=trace.get('session_id') or saved.get('session_id'))
         url = _trace_url(url, row, model=False)
     _show(url, view, instruction, f'Saved {label} trace: {trace_id}', readiness)
