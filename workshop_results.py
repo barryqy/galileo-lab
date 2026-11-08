@@ -170,6 +170,19 @@ def print_results(result):
         print(result['delivery_error'])
 
 
+def payload_outline(payload):
+    def operation(record, root=False):
+        fields = ('id', 'name', 'type', 'parent_id', 'model', 'metrics')
+        if root:
+            fields += ('input', 'output')
+        result = {key: record[key] for key in fields if key in record}
+        result['spans'] = [operation(child) for child in record.get('spans') or []]
+        return result
+    result = {key: value for key, value in payload.items() if key != 'traces'}
+    result['traces'] = [operation(trace, root=True) for trace in payload['traces']]
+    return result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -178,6 +191,7 @@ def main(argv=None):
     inspect.add_argument('--local', action='store_true', help='Read only the saved local receipt')
     raw = sub.add_parser('json', help='Print the actual JSON trace payload from a saved request')
     raw.add_argument('--run')
+    raw.add_argument('--outline', action='store_true', help='Show actual request and operation fields without full model messages')
     opening = sub.add_parser('open', help='Print one native console URL for saved results')
     opening.add_argument('--view', choices=VIEWS, required=True)
     opening.add_argument('--run')
@@ -189,7 +203,8 @@ def main(argv=None):
         load_local_env()
         if args.command == 'json':
             receipt = load_run(STATE_DIR, args.run)
-            print(json.dumps(receipt['upload_payload'], indent=2))
+            payload = receipt['upload_payload']
+            print(json.dumps(payload_outline(payload) if args.outline else payload, indent=2))
             return 0
         if args.command == 'compare':
             if bool(args.before) != bool(args.after):

@@ -455,6 +455,36 @@ class WorkshopTests(unittest.TestCase):
         self.assertFalse(telemetry.duration_matches(original, None))
         self.assertFalse(telemetry.duration_matches(original, True))
 
+    def test_native_tool_message_normalization_is_narrow(self):
+        _, receipt = self.run_question()
+        model = self.client.traces[receipt['native_trace_id']]['spans'][0]['spans'][-1]
+        assistant = model['input'][2]
+        self.assertIsNone(assistant['content'])
+        assistant['content'] = ''
+        assistant['tool_calls'][0].pop('type')
+        self.assertEqual(evidence.inspect_run(self.client, receipt)['run_id'], receipt['run_id'])
+        assistant['tool_calls'][0]['function']['arguments'] = '{"query":"changed"}'
+        with self.assertRaisesRegex(ValueError, 'input'):
+            evidence.inspect_run(self.client, receipt)
+
+    def test_json_outline_uses_same_actual_tree_without_model_messages(self):
+        _, receipt = self.run_question()
+        with patch.object(evidence, 'STATE_DIR', self.state), patch.object(evidence, 'client_or_exit', side_effect=AssertionError('network')):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(evidence.main(['json', '--outline', '--run', receipt['run_id']]), 0)
+        outline = json.loads(output.getvalue())
+        actual = receipt['upload_payload']['traces'][0]
+        root = outline['traces'][0]
+        self.assertEqual(root['id'], actual['id'])
+        self.assertEqual(root['input'], actual['input'])
+        self.assertEqual(root['output'], actual['output'])
+        self.assertEqual(root['metrics'], actual['metrics'])
+        model = root['spans'][0]['spans'][-1]
+        self.assertEqual(model['name'], 'support-answer')
+        self.assertNotIn('input', model)
+        self.assertNotIn('output', model)
+        self.assertEqual(model['metrics'], actual['spans'][0]['spans'][-1]['metrics'])
+
     def test_local_inspection_never_calls_network(self):
         _, receipt = self.run_question()
         with patch.object(self.client, 'get', side_effect=AssertionError('network')):

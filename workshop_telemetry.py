@@ -1,5 +1,6 @@
 """Real SDK spans exported through the Workshop JSON API, rather than OTLP."""
 
+import copy
 import json
 import math
 import struct
@@ -269,6 +270,30 @@ def read_back(client, receipt):
         time.sleep(0.2 * (attempt + 1))
 
 
+def _message_matches(original, stored):
+    if not isinstance(original, dict) or not isinstance(stored, dict):
+        return original == stored
+    calls = original.get('tool_calls')
+    if original.get('role') != 'assistant' or not isinstance(calls, list) or not calls:
+        return original == stored
+    expected = copy.deepcopy(original)
+    # Native messages use empty content and omit the standard function discriminator.
+    if expected.get('content') is None and stored.get('content') == '':
+        expected['content'] = ''
+    native_calls = stored.get('tool_calls')
+    if isinstance(native_calls, list) and len(calls) == len(native_calls):
+        for call, native in zip(expected['tool_calls'], native_calls):
+            if isinstance(call, dict) and isinstance(native, dict) and call.get('type') == 'function' and 'type' not in native:
+                call.pop('type')
+    return expected == stored
+
+
+def _input_matches(original, stored):
+    if not isinstance(original, list) or not isinstance(stored, list):
+        return original == stored
+    return len(original) == len(stored) and all(_message_matches(want, got) for want, got in zip(original, stored))
+
+
 def _read_once(client, receipt):
     destination = receipt['destination']
     if client.base_url.rstrip('/') != destination['api_base_url'].rstrip('/'):
@@ -296,7 +321,10 @@ def _read_once(client, receipt):
             raise ValueError('Stored span parent does not match SDK parent mapping')
         original = expected[saved['native_id']]
         for field in ('name', 'type', 'input', 'output', 'model', 'status_code'):
-            if field in original and record.get(field) != original[field]:
+            if field not in original:
+                continue
+            matches = _input_matches(original[field], record.get(field)) if field == 'input' else record.get(field) == original[field]
+            if not matches:
                 raise ValueError(f'Stored {field} does not match the actual SDK request')
         for field, value in original['metrics'].items():
             stored = (record.get('metrics') or {}).get(field)

@@ -22,13 +22,13 @@ Open `workshop_app.py` in the editor. Read `QUESTION`, `TOP_K`, and `MAX_TOKENS`
 
 ```bash
 python3 workshop_app.py
-python3 workshop_results.py json
+python3 workshop_results.py json --outline
 python3 workshop_results.py open --view trace
 ```
 
 The model selects the `search_support_notes` tool, supplies its search query, and receives actual keyword search results from the small Markdown files in `support_docs/`. It can then answer or search again, up to three model rounds. The documents are supplied teaching material; the model calls, selected tool arguments, search work, and answers are real. A model or tool failure stops the request without a canned answer.
 
-The JSON is the actual payload saved for that request. Its root contains an agent node and the model calls. Open `--view agent` to explore the shared stream’s Agent graph; use Traces to inspect one request. `workshop_results.py` only reads saved requests and the API; it never calls the model.
+The JSON outline shows actual request and operation fields from the saved payload, without full model messages. Use `json` without `--outline` to read the complete actual payload. Its root contains an agent node and the model calls. Open `--view agent` to explore the shared stream’s Agent graph; use Traces to inspect one request. `workshop_results.py` only reads saved requests and the API; it never calls the model.
 
 ### Add a retrieval span
 
