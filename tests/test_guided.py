@@ -334,6 +334,79 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(saved['log-traces']['trace_id'], self.client.payloads[1]['traces'][0]['id'])
         self.assertNotEqual(saved['barrybot']['trace_id'], saved['log-traces']['trace_id'])
 
+    def legacy_scorers(self):
+        self.output = io.StringIO()
+        with patch.object(lab, 'STATE_DIR', self.root), patch.object(lab, 'client_or_exit', return_value=self.client):
+            with patch.object(lab, 'list_scorers', return_value=[{'id': 'correctness', 'name': 'Correctness'}]):
+                with contextlib.redirect_stdout(self.output):
+                    lab.cmd_scorers(argparse.Namespace())
+        return self.output.getvalue()
+
+    def test_corrupt_sidecar_preserves_original_and_successful_legacy_output(self):
+        path = self.root / 'navigation.json'
+        for corrupt in ('{', '[]', 'null'):
+            with self.subTest(corrupt=corrupt):
+                path.write_text(corrupt)
+                output = self.legacy_scorers()
+                self.assertIn('Scorers visible to this key: 1', output)
+                self.assertIn('Correctness (correctness)', output)
+                self.assertIn('Navigation warning:', output)
+                self.assertIn('not saved', output)
+                self.assertEqual(path.read_text(), corrupt)
+
+    def test_optional_persistence_oserror_keeps_successful_legacy_output(self):
+        with patch.object(Path, 'mkdir', side_effect=OSError('storage unavailable')):
+            output = self.legacy_scorers()
+        self.assertIn('Scorers visible to this key: 1', output)
+        self.assertIn('Navigation warning:', output)
+        self.assertIn('not saved', output)
+        self.assertFalse((self.root / 'navigation.json').exists())
+
+    def test_interrupted_atomic_replace_preserves_previous_navigation(self):
+        self.navigation('dataset', dataset_id='kept', name='Previous cases')
+        path = self.root / 'navigation.json'
+        original = path.read_bytes()
+        with patch('os.replace', side_effect=OSError('interrupted publication')):
+            output = self.legacy_scorers()
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(list(self.root.glob('.navigation-*')), [])
+        self.assertIn('Scorers visible to this key: 1', output)
+        self.assertIn('Navigation warning:', output)
+
+    def test_atomic_navigation_publishes_complete_private_file(self):
+        import os
+        self.navigation('dataset', dataset_id='kept', name='Previous cases')
+        path = self.root / 'navigation.json'
+        original = path.read_bytes()
+        real_replace = os.replace
+        publications = []
+
+        def observe_replace(source, target):
+            self.assertEqual(path.read_bytes(), original)
+            payload = json.loads(Path(source).read_text())
+            self.assertEqual(payload['dataset']['dataset_id'], 'kept')
+            self.assertEqual(payload['scorers']['entries'][0]['id'], 'correctness')
+            self.assertEqual(Path(source).stat().st_mode & 0o777, 0o600)
+            publications.append(str(target))
+            real_replace(source, target)
+
+        with patch('os.replace', side_effect=observe_replace):
+            self.legacy_scorers()
+        self.assertEqual(publications, [str(path)])
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
+
+    def test_privacy_metadata_opens_parent_trace_and_explains_native_metadata_path(self):
+        report = self.run_suite('privacy')
+        trace = self.client.traces[report['trace_ids'][0]]
+        trace['session_id'] = 'privacy-session'
+        output = self.invoke('open-ui', '--checkpoint', 'privacy-metadata')
+        self.assertIn('traceId=' + trace['id'], output)
+        self.assertNotIn('spanId=', output)
+        self.assertIn('parent trace', output)
+        self.assertIn('Trace Summary → Params → Metadata', output)
+        self.assertEqual(output.count('https://'), 1)
+
     def test_every_guide_execution_command_accepts_guided(self):
         parser = lab.build_parser()
         for command in ('run-tests', 'findings', 'compare-tests', 'guardrail', 'agent-demo',

@@ -3,10 +3,11 @@
 import json
 import os
 import sys
+import tempfile
 from urllib.parse import quote, urlencode, urlsplit
 
 from galileo_client import GalileoApiError
-from observability_tests import _display, _load_manifest, _write_json, report_findings
+from observability_tests import _display, _load_manifest, report_findings
 
 
 CHECKPOINTS = (
@@ -20,17 +21,45 @@ BATCH_VIEWS = {
     'response': ('Conversation / model response', 'Read the question and actual model answer.'),
     'tokens': ('Model span / Tokens', 'Compare input, output and total tokens. Missing usage is unavailable, never zero.'),
     'latency': ('Trace timeline / Latency', 'Compare controlled reference retrieval, model duration and total duration.'),
-    'metadata': ('Trace / Metadata', 'Find pii_input, pii_output and pii_detector. These are local email/phone pattern checks, not a native classifier.'),
+    'metadata': ('Parent trace / Metadata', 'Select the parent trace, then Trace Summary → Params → Metadata. Find pii_input, pii_output and pii_detector. These are local email/phone pattern checks, not a native classifier.'),
 }
 
 
 def save_navigation(state_dir, feature, client, ids, *, console_url=None, **values):
     path = state_dir / 'navigation.json'
-    records = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
-    records[feature] = {'destination': {'api_base_url': client.base_url.rstrip('/'), **ids,
-        'console_url': (console_url or os.environ.get('GALILEO_CONSOLE_URL',
-            'https://app.galileo.ai/barry-2')).rstrip('/')}, **values}
-    _write_json(path, records)
+    tmp_path = None
+    try:
+        try:
+            records = json.loads(path.read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            records = {}
+        if not isinstance(records, dict):
+            raise ValueError('existing navigation file must contain an object')
+        records[feature] = {'destination': {'api_base_url': client.base_url.rstrip('/'), **ids,
+            'console_url': (console_url or os.environ.get('GALILEO_CONSOLE_URL',
+                'https://app.galileo.ai/barry-2')).rstrip('/')}, **values}
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state_dir.chmod(0o700)
+        fd, tmp_path = tempfile.mkstemp(prefix='.navigation-', suffix='.json', dir=state_dir)
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump(records, stream, indent=2)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp_path, path)
+        tmp_path = None
+        return True
+    except (OSError, ValueError, TypeError) as exc:
+        # Optional UI navigation must not invalidate an otherwise successful feature.
+        print(f'Navigation warning: {feature} navigation was not saved: {exc}. '
+            f'Any existing {path} is preserved; inspect it before retrying the feature.')
+        return False
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError as exc:
+                print(f'Navigation warning: could not remove temporary navigation file {tmp_path}: {exc}')
 
 
 def _console_url(destination):
@@ -92,12 +121,14 @@ def _batch_checkpoint(client, state_dir, checkpoint, run_id):
     if row is None:
         raise ValueError(f'Saved {suite} run is missing its {case_name} case')
     url = _stream_url(report['destination'])
-    target = _trace_url(url, row)
+    target = _trace_url(url, row, model=view != 'metadata')
     ready = 'API evidence available' if row['status'] != 'pending' else 'Still indexing; retry findings --guided, without rerunning tests'
     if row['status'] not in ('completed', 'pending'):
         ready = f"Trace status: {row['status']}; a model answer may be unavailable"
     if target == url:
-        ready += '; open the saved trace below from Tracing → Traces, then its model span when available'
+        ready += '; open the saved trace below from Tracing → Traces'
+        if view != 'metadata':
+            ready += ', then its model span when available'
     title, instruction = BATCH_VIEWS[view]
     markers = f"Saved {suite} run: {report['run_id']} | case: {case_name} | trace: {row['trace_id']}"
     if view == 'tokens':
