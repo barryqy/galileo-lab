@@ -376,10 +376,12 @@ def _usd(value):
     return "unavailable" if value is None else f"${value:.6f}"
 
 
-def print_findings(report: dict) -> None:
+def print_findings(report: dict, *, guided=False) -> None:
     if report.get("agent_name"):
         print(f"Your agent: {report['agent_name']}")
     print(f"Splunk Observability API findings | {report['suite']} | run {report['run_id']}")
+    if guided:
+        print("Readiness: " + ("exact traces available" if report["api_verified"] else "still indexing; retry findings"))
     print(f"Exact traces read back: {sum(row['status'] != 'pending' for row in report['cases'])}/{len(report['cases'])}")
     for row in report["cases"]:
         pii = "unavailable"
@@ -402,7 +404,8 @@ def print_findings(report: dict) -> None:
     print(f"PII: {report['pii_source']}. 'none' means this limited pattern found no match.")
     if not report["api_verified"]:
         print("Some traces are still unavailable from the API. Run findings again; cached measurements were not substituted.")
-    _print_ui_links(report)
+    if not guided:
+        _print_ui_links(report)
 
 
 def _print_ui_links(report: dict) -> None:
@@ -426,7 +429,7 @@ def print_ui(report: dict) -> None:
         print(f"  {row['case']}: {row['trace_id']}")
 
 
-def compare_runs(client, *, state_dir: Path) -> None:
+def compare_runs(client, *, state_dir: Path, guided=False) -> None:
     chosen = {}
     for path in sorted((state_dir / "runs").glob("*.json"), reverse=True):
         if path.name.endswith("-findings.json"):
@@ -447,6 +450,6 @@ def compare_runs(client, *, state_dir: Path) -> None:
     print("Baseline / efficient comparison from fresh API reads of saved trace IDs")
     for suite in ("baseline", "efficient"):
         report = report_findings(client, state_dir=state_dir, run_id=chosen[suite]["run_id"])
-        print_findings(report)
+        print_findings(report, guided=guided)
     print("The local retrieval delay is controlled: baseline 0.40 s/case, efficient 0.02 s/case. "
         "Model timing still varies; this comparison does not establish equal answer quality.")

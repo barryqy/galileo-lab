@@ -24,6 +24,14 @@ class BrokenLLM:
 
 
 class CliTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state_dir = Path(tmp.name)
+        state = patch.object(galileo_lab, 'STATE_DIR', self.state_dir)
+        state.start()
+        self.addCleanup(state.stop)
+
     def test_agent_name_is_a_public_command_that_needs_no_credentials_or_api(self):
         parser = galileo_lab.build_parser()
         commands = parser._subparsers._group_actions[0].choices
@@ -68,7 +76,7 @@ class CliTests(unittest.TestCase):
         client.post.assert_not_called()
 
     def test_dataset_upload_maps_columns_and_verifies_the_stored_cases(self):
-        client = MagicMock()
+        client = MagicMock(base_url="https://api.example.test")
         client.post.return_value = {"id": "dataset", "name": "Cases", "num_rows": 4}
         ids = {"project_id": "project", "log_stream_id": "stream"}
         with patch.object(galileo_lab, "client_or_exit", return_value=client):
@@ -81,11 +89,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(mapping["input"], {"columns": ["input"], "flatten": True})
         self.assertEqual(mapping["output"], {"columns": ["ground_truth"], "flatten": True})
         verify.assert_called_once_with(client, "dataset", galileo_lab.DATASET_FILE)
+        saved = galileo_lab.json.loads((self.state_dir / 'navigation.json').read_text())['dataset']
+        self.assertEqual(saved['dataset_id'], 'dataset')
+        self.assertEqual(saved['destination']['project_id'], 'project')
 
     def test_guardrail_protects_the_model_and_logs_actual_decisions(self):
         llm = MagicMock(model="live-model", model_source="devnet-models")
         llm.complete.return_value = "Refunds require policy review."
-        client = MagicMock()
+        client = MagicMock(base_url="https://api.example.test")
         ids = {"project_id": "project", "log_stream_id": "stream"}
         with patch.object(galileo_lab, "client_or_exit", return_value=client):
             with patch.object(galileo_lab, "ensure_project_and_stream", return_value=ids):
@@ -99,6 +110,9 @@ class CliTests(unittest.TestCase):
         traces = client.post.call_args.kwargs["json"]["traces"]
         self.assertEqual([t["user_metadata"]["decision"] for t in traces], ["ALLOW", "DENY"])
         self.assertEqual([t["user_metadata"]["protected_calls"] for t in traces], [1, 0])
+        saved = galileo_lab.json.loads((self.state_dir / 'navigation.json').read_text())['guardrail']
+        self.assertEqual(saved['cases']['denied'], {'trace_id': traces[1]['id'], 'decision': 'DENY'})
+        self.assertFalse(any(span['type'] == 'llm' for span in traces[1]['spans']))
 
     def test_model_check_does_not_save_readiness_after_a_canned_fallback(self):
         output = io.StringIO()

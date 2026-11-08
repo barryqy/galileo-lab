@@ -2,6 +2,8 @@ import argparse
 import contextlib
 import copy
 import io
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -9,6 +11,8 @@ import galileo_lab
 
 
 class DashboardClient:
+    base_url = "https://api.example.test"
+
     def __init__(self, trends, discard_writes=False):
         self.trends = copy.deepcopy(trends)
         self.discard_writes = discard_writes
@@ -59,6 +63,13 @@ def trends_fixture():
 
 
 class DashboardTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        state = patch.object(galileo_lab, 'STATE_DIR', Path(tmp.name))
+        state.start()
+        self.addCleanup(state.stop)
+
     def run_dashboard(self, client):
         output = io.StringIO()
         ids = {"project_id": "project", "log_stream_id": "stream"}
