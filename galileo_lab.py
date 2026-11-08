@@ -434,7 +434,8 @@ def build_trace(prompt: Dict[str, str], output: str, log_stream_id: str, llm: De
     }
 
 
-def cmd_log_traces(_: argparse.Namespace) -> None:
+def cmd_log_traces(args: argparse.Namespace) -> None:
+    guided_purpose(args, 'Record application inputs, responses and response sources as traces.')
     client = client_or_exit()
     ids = ensure_project_and_stream(client)
     try:
@@ -461,6 +462,7 @@ def cmd_log_traces(_: argparse.Namespace) -> None:
         "devnet_llm_model": llm.model,
         "devnet_llm_model_source": llm.model_source,
     })
+    save_navigation(STATE_DIR, 'log-traces', client, ids, trace_id=traces[0]['id'])
     print(f"BarryBot selected model: {llm.model}")
     print(f"Logged {len(traces)} BarryBot traces")
     for trace in traces:
@@ -468,6 +470,7 @@ def cmd_log_traces(_: argparse.Namespace) -> None:
 
 
 def cmd_barrybot(args: argparse.Namespace) -> None:
+    guided_purpose(args, 'Ask one question and record its actual response source.')
     client = client_or_exit()
     ids = ensure_project_and_stream(client)
     try:
@@ -483,6 +486,7 @@ def cmd_barrybot(args: argparse.Namespace) -> None:
         response_metadata=bot.last_response_metadata, messages=bot.last_messages)
     client.post(f"/v2/projects/{ids['project_id']}/traces", json={"traces": [trace], "log_stream_id": ids["log_stream_id"]})
     save_state({"last_barrybot_trace_id": trace["id"], "devnet_llm_model": llm.model})
+    save_navigation(STATE_DIR, 'barrybot', client, ids, trace_id=trace['id'])
     print(f"BarryBot response source: {bot.last_response_metadata['response_source']}")
     if not bot.last_response_metadata["used_fallback"]:
         print(f"BarryBot used DevNet LLM model: {llm.model}")
@@ -738,9 +742,11 @@ def list_scorers(client: GalileoClient, limit: int = 100) -> List[Dict[str, Any]
     raise RuntimeError("Unable to list scorers")
 
 
-def cmd_scorers(_: argparse.Namespace) -> None:
+def cmd_scorers(args: argparse.Namespace) -> None:
+    guided_purpose(args, 'Inspect the evaluators visible to this account.')
     client = client_or_exit()
     rows = list_scorers(client)
+    save_navigation(STATE_DIR, 'scorers', client, {}, entries=rows)
     print(f"Scorers visible to this key: {len(rows)}")
     for row in rows[:10]:
         label = first_name(row)
@@ -748,7 +754,8 @@ def cmd_scorers(_: argparse.Namespace) -> None:
         print(f"  {label} ({scorer_id})")
 
 
-def cmd_integrations(_: argparse.Namespace) -> None:
+def cmd_integrations(args: argparse.Namespace) -> None:
+    guided_purpose(args, 'Inspect available integrations without configuring a connection.')
     client = client_or_exit()
     result = client.get("/v2/integrations/available")
     rows = pick_list(result)
@@ -756,6 +763,7 @@ def cmd_integrations(_: argparse.Namespace) -> None:
         rows = [{"name": str(name)} for name in result["integrations"]]
     elif not rows and isinstance(result, dict):
         rows = [{"name": key, "value": value} for key, value in result.items()]
+    save_navigation(STATE_DIR, 'integrations', client, {}, entries=rows)
     print(f"Available integration entries: {len(rows)}")
     for row in rows[:20]:
         print(f"  {first_name(row)}")
@@ -1065,7 +1073,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.choices['open-ui'].add_argument('--checkpoint', choices=CHECKPOINTS)
     for command in ('run-tests', 'findings', 'compare-tests', 'guardrail', 'agent-demo',
             'dataset', 'experiment', 'human-workflows', 'dashboard', 'trends', 'release-gate',
-            'llm-check', 'query-traces', 'log-traces', 'scorers', 'integrations', 'setup'):
+            'llm-check', 'query-traces', 'log-traces', 'scorers', 'integrations', 'setup', 'barrybot'):
         sub.choices[command].add_argument('--guided', action='store_true',
             help='Show learner findings without automatic console links')
     return parser

@@ -14,6 +14,7 @@ CHECKPOINTS = (
     'privacy-response', 'privacy-metadata', 'trends', 'control-allowed', 'control-denied',
     'refund-baseline', 'refund-candidate', 'dataset', 'experiment-baseline',
     'experiment-candidate', 'sample-review', 'dashboard',
+    'scorers', 'integrations', 'instrumentation', 'interactive',
 )
 BATCH_VIEWS = {
     'response': ('Conversation / model response', 'Read the question and actual model answer.'),
@@ -32,13 +33,18 @@ def save_navigation(state_dir, feature, client, ids, *, console_url=None, **valu
     _write_json(path, records)
 
 
-def _stream_url(destination):
+def _console_url(destination):
     console = destination['console_url']
     parsed = urlsplit(console)
     if (parsed.scheme not in ('https', 'http') or not parsed.netloc or parsed.username
             or parsed.password or parsed.query or parsed.fragment
             or any(c.isspace() or ord(c) < 32 for c in console)):
         raise ValueError('Saved console destination is invalid')
+    return console.rstrip('/')
+
+
+def _stream_url(destination):
+    console = _console_url(destination)
     return (f"{console.rstrip('/')}/project/{quote(destination['project_id'], safe='')}/"
         f"agent-streams/{quote(destination['log_stream_id'], safe='')}")
 
@@ -91,7 +97,7 @@ def _batch_checkpoint(client, state_dir, checkpoint, run_id):
     if row['status'] not in ('completed', 'pending'):
         ready = f"Trace status: {row['status']}; a model answer may be unavailable"
     if target == url:
-        ready += '; open the saved trace below from Logs, then its model span when available'
+        ready += '; open the saved trace below from Tracing → Traces, then its model span when available'
     title, instruction = BATCH_VIEWS[view]
     markers = f"Saved {suite} run: {report['run_id']} | case: {case_name} | trace: {row['trace_id']}"
     if view == 'tokens':
@@ -109,7 +115,8 @@ def print_checkpoint(client, *, state_dir, checkpoint, run_id=None):
     if run_id:
         raise ValueError('--run applies only to baseline, efficient and privacy checkpoints')
     feature = checkpoint.split('-', 1)[0]
-    feature = {'control': 'guardrail', 'refund': 'agent-demo', 'sample': 'human-workflows'}.get(feature, feature)
+    feature = {'control': 'guardrail', 'refund': 'agent-demo', 'sample': 'human-workflows',
+        'interactive': 'barrybot', 'instrumentation': 'log-traces'}.get(feature, feature)
     path = state_dir / 'navigation.json'
     records = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     saved = records.get(feature)
@@ -118,6 +125,16 @@ def print_checkpoint(client, *, state_dir, checkpoint, run_id=None):
     destination = saved['destination']
     if client.base_url.rstrip('/') != destination['api_base_url']:
         raise ValueError('Current API destination differs from this saved feature')
+    if feature in ('scorers', 'integrations'):
+        console = _console_url(destination)
+        route = '/evaluators' if feature == 'scorers' else '/settings/integrations'
+        view = 'Evaluators' if feature == 'scorers' else 'Settings / Integrations'
+        instruction = ('Inspect available evaluator definitions. Listing one does not mean it was run on these traces.'
+            if feature == 'scorers' else 'Inspect integration options and setup requirements. Listing an integration does not configure a connection.')
+        names = [str(item.get('name') or item.get('id') or '(unnamed)') for item in saved.get('entries', [])[:10]]
+        _show(console + route, view, instruction,
+            'Saved API entries: ' + (', '.join(names) or 'none returned'), 'Catalog read completed; UI visibility depends on account permissions')
+        return
     url = _stream_url(destination)
     if feature == 'dataset':
         url = destination['console_url'].rstrip('/') + '/datasets'
@@ -142,7 +159,15 @@ def print_checkpoint(client, *, state_dir, checkpoint, run_id=None):
             instruction += ' Find BarryBot release readiness and its four application metric widgets.'
         _show(url, 'Stream / Trends', instruction, markers, 'Configuration read back; metric availability depends on indexed evidence and selected time range')
         return
-    if feature == 'guardrail':
+    if feature in ('barrybot', 'log-traces'):
+        label = checkpoint
+        if not saved.get('trace_id'):
+            raise ValueError(f'No saved {feature} trace. Run {feature} --guided first.')
+        row = {'trace_id': saved['trace_id']}
+        view = 'Tracing → Traces / application response'
+        instruction = ('Open this exact trace under Tracing → Traces; inspect input, output and response_source. '
+            'A local fallback response is not a model response.')
+    elif feature == 'guardrail':
         label = checkpoint.split('-', 1)[1]
         decision = 'ALLOW' if label == 'allowed' else 'DENY'
         row = saved.get('cases', {}).get(label)

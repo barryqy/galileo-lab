@@ -280,10 +280,65 @@ class GuidedTests(unittest.TestCase):
         self.assertIn('Tokens: input unavailable, output unavailable, total unavailable', output)
         self.assertNotIn('total 0', output)
 
+    def test_catalog_checkpoints_use_verified_routes_and_saved_tenant(self):
+        for feature, route in [('scorers', '/evaluators'), ('integrations', '/settings/integrations')]:
+            with self.subTest(feature=feature):
+                self.navigation(feature, entries=[{'name': 'Example'}])
+                output = self.invoke('open-ui', '--checkpoint', feature)
+                self.assertEqual(output.count('https://'), 1)
+                self.assertIn('https://console.example.test/saved-tenant' + route, output)
+
+    def test_interactive_and_instrumentation_never_open_another_batch(self):
+        baseline = self.run_suite('baseline')
+        for checkpoint, feature in [('interactive', 'barrybot'), ('instrumentation', 'log-traces')]:
+            with self.subTest(checkpoint=checkpoint):
+                with self.assertRaisesRegex(ValueError, feature):
+                    self.invoke('open-ui', '--checkpoint', checkpoint)
+                self.navigation(feature, trace_id='own-' + checkpoint)
+                self.client.traces['own-' + checkpoint] = {'id': 'own-' + checkpoint,
+                    'session_id': 'own-session', 'spans': [], 'user_metadata': {}}
+                output = self.invoke('open-ui', '--checkpoint', checkpoint)
+                self.assertIn('traceId=own-' + checkpoint, output)
+                self.assertNotIn(baseline['run_id'], output)
+                self.assertIn('Tracing', output)
+                self.assertNotIn('Logs', output)
+
+    def test_diagnostic_execution_saves_navigation_without_extra_remote_writes(self):
+        class CatalogClient:
+            base_url = 'https://api.example.test'
+
+            def get(self, path):
+                if path == '/v2/integrations/available':
+                    return {'integrations': ['OpenAI', 'LangChain']}
+                raise AssertionError(path)
+
+        self.client = CatalogClient()
+        with patch.object(lab, 'list_scorers', return_value=[{'id': 'scorer', 'name': 'Correctness'}]):
+            self.invoke('scorers', '--guided')
+        self.invoke('integrations', '--guided')
+        saved = json.loads((self.root / 'navigation.json').read_text())
+        self.assertEqual(saved['scorers']['entries'][0]['id'], 'scorer')
+        self.assertEqual(saved['integrations']['entries'][0]['name'], 'OpenAI')
+
+    def test_interactive_and_instrumentation_execution_save_their_own_ids(self):
+        class LocalLLM(TestLLM):
+            base_url = 'https://model.example.test'
+            model_source = 'test'
+
+        with patch.object(lab, 'ensure_project_and_stream', return_value=self.ids), patch.object(lab, 'save_state'):
+            with patch.object(lab.DevNetLLM, 'from_env', return_value=LocalLLM()):
+                self.invoke('barrybot', '--ask', 'How should I check usage?', '--guided')
+                self.invoke('log-traces', '--guided')
+        saved = json.loads((self.root / 'navigation.json').read_text())
+        self.assertEqual(saved['barrybot']['trace_id'], self.client.payloads[0]['traces'][0]['id'])
+        self.assertEqual(saved['log-traces']['trace_id'], self.client.payloads[1]['traces'][0]['id'])
+        self.assertNotEqual(saved['barrybot']['trace_id'], saved['log-traces']['trace_id'])
+
     def test_every_guide_execution_command_accepts_guided(self):
         parser = lab.build_parser()
         for command in ('run-tests', 'findings', 'compare-tests', 'guardrail', 'agent-demo',
-                'dataset', 'experiment', 'human-workflows', 'dashboard', 'trends', 'release-gate'):
+                'dataset', 'experiment', 'human-workflows', 'dashboard', 'trends', 'release-gate',
+                'scorers', 'integrations', 'barrybot', 'log-traces', 'query-traces'):
             with self.subTest(command=command):
                 self.assertTrue(parser.parse_args([command, '--guided']).guided)
 
