@@ -18,9 +18,10 @@ python3 -m uv pip install --python .venv/bin/python -r requirements.txt || exit 
 source 0-init-lab.sh workshop || exit 1
 ```
 
-Open `workshop_app.py` in the editor. Read `QUESTION`, `TOP_K`, and `MAX_TOKENS`, then run the visible application:
+Run the support agent with its supplied question, up to three support documents, and a 180-token answer limit:
 
 ```bash
+cd /home/developer/src/galileo-lab || exit 1
 python3 workshop_app.py
 python3 workshop_results.py json --outline
 python3 workshop_results.py open --view trace
@@ -32,39 +33,65 @@ The JSON outline shows actual request and operation fields from the saved payloa
 
 ### Add a retrieval span
 
-The OpenTelemetry SDK creates the root `answer-question`, child `support-agent`, and model spans. In the nested retrieval function, uncomment this line and run the app again:
+The OpenTelemetry SDK creates the root `answer-question`, child `support-agent`, and model spans. Enable a child span around the actual document search for the next request:
 
-```python
-@tracer.start_as_current_span("retrieve-documents")
+```bash
+cd /home/developer/src/galileo-lab || exit 1
+python3 workshop_app.py --trace-retrieval
+python3 workshop_results.py json --outline
+python3 workshop_results.py open --view trace
 ```
 
-The actual local search now appears as its own SDK span under the agent. Before this edit, the search still runs but has no separate span. The app uses an explicit `TracerProvider`, a Resource with `service.name`, `TrackSpans` to notice unfinished work, and `SimpleSpanProcessor` to send ended spans to `WorkshopExporter`. It flushes and shuts down the provider after the request.
+The actual local search now appears as `retrieve-documents` under the agent. The flag applies the SDK decorator to the same search function: `retrieve_documents = tracer.start_as_current_span('retrieve-documents')(retrieve_documents)`. The SDK starts the span when the model-selected tool calls that function and ends it when the search returns or raises an error. Without the flag, the search still runs and the trace keeps its original request, agent, and model spans.
+
+The app uses an explicit `TracerProvider`, a Resource with `service.name`, `TrackSpans` to notice unfinished work, and `SimpleSpanProcessor` to send ended spans to `WorkshopExporter`. It flushes and shuts down the provider after the request.
 
 The custom exporter converts those genuine SDK spans to the Workshop JSON trace API. It does not send OTLP or use a Collector. In a deployment with an approved OTLP endpoint, the same instrumentation could use an OTLP exporter directly or through a Collector. SDK trace/span IDs remain in `otel.*` metadata; separate UUID4 IDs identify native console records.
 
 ```bash
+cd /home/developer/src/galileo-lab || exit 1
 python3 workshop_results.py inspect
 python3 workshop_results.py open --view tokens
 python3 workshop_results.py open --view latency
 ```
 
-Edit only `TOP_K`, run the same question again, and compare:
+Request one document with `--top-k 1`, keeping the retrieval span enabled, and compare with the previous three-document request:
 
 ```bash
-python3 workshop_app.py
+cd /home/developer/src/galileo-lab || exit 1
+python3 workshop_app.py --trace-retrieval --top-k 1
 python3 workshop_results.py compare
 ```
 
-Keep the question, model, destination and `MAX_TOKENS` the same. Comparisons show actual selected document names/counts, SDK duration and provider usage summed across model calls. Model calls can retry transient HTTP errors up to three attempts; failed-attempt token usage remains unknown. Missing usage stays unavailable. Fewer documents do not guarantee a faster or better answer; read both responses for adequacy.
+Keep the supplied question, model, destination and answer limit the same for this comparison. Comparisons show actual selected document names/counts, SDK duration and provider usage summed across model calls. Model calls can retry transient HTTP errors up to three attempts; failed-attempt token usage remains unknown. Missing usage stays unavailable. Fewer documents do not guarantee a faster or better answer; read both responses for adequacy.
 
 For the privacy exercise, use fictional contact details:
 
 ```bash
-python3 workshop_app.py --question 'How should support handle fictional contact alex@example.com and +1 202-555-0147?'
+cd /home/developer/src/galileo-lab || exit 1
+python3 workshop_app.py --trace-retrieval --question 'How should support handle fictional contact alex@example.com and +1 202-555-0147?'
 python3 workshop_results.py open --view privacy
 ```
 
 Inspect parent metadata `pii_input`, `pii_output` and `pii_detector`. The email/phone pattern check records matches; it does not redact, block, or detect every form of personal information.
+
+### Optional questions and command options
+
+The supplied questions complete the exercises. To try your own question, replace only the quoted text in this optional command:
+
+```bash
+cd /home/developer/src/galileo-lab || exit 1
+python3 workshop_app.py --trace-retrieval --question 'How can I compare two assistant releases?'
+python3 workshop_results.py open --view response
+```
+
+| Option | Behavior |
+| --- | --- |
+| `--trace-retrieval` | Add a real SDK child span around document search for this request; off by default |
+| `--question 'QUESTION'` | Use a custom question; the default asks which signals to check for a slow assistant |
+| `--top-k N` or `--context-limit N` | Include up to N matched documents; default 3 |
+| `--max-tokens N` | Set the answer limit passed to each model call; default 180 |
+| `--details` | Also show the saved run and native record IDs |
 
 Use `inspect --local` to read local results without API access, `inspect --run UUID` for a specific saved request, and `json --run UUID` to inspect that request's actual upload payload. `open --view response|trace|agent|tokens|latency|privacy` prints one console URL. Privacy selects a request containing contact patterns; other views select the latest successful model request. If records are still indexing, retry `inspect` instead of repeating the model call. `workshop_app.py --details` also shows the local run and native record IDs.
 

@@ -25,7 +25,8 @@ from workshop_telemetry import WorkshopExporter, TrackSpans, record_completion
 DOCS = Path(__file__).parent / 'support_docs'
 
 
-def answer_question(tracer, llm, question, top_k=TOP_K, max_tokens=MAX_TOKENS, docs_dir=DOCS):
+def answer_question(tracer, llm, question, top_k=TOP_K, max_tokens=MAX_TOKENS, docs_dir=DOCS,
+        *, trace_retrieval=False):
     if not question.strip() or top_k < 1 or max_tokens < 1:
         raise ValueError('Use a non-empty question and positive TOP_K and MAX_TOKENS')
     with tracer.start_as_current_span('answer-question') as request:
@@ -35,8 +36,6 @@ def answer_question(tracer, llm, question, top_k=TOP_K, max_tokens=MAX_TOKENS, d
             'pii_detector': 'local-email-phone-pattern-v1'})
         with tracer.start_as_current_span('support-agent', attributes={'workshop.kind': 'agent',
                 'workshop.question': question}) as agent:
-            # Uncomment this line to observe the real retrieval work as its own SDK span.
-            # @tracer.start_as_current_span("retrieve-documents")
             def retrieve_documents(query):
                 words = set(re.findall(r'[a-z]{3,}', query.lower()))
                 ranked = []
@@ -54,6 +53,9 @@ def answer_question(tracer, llm, question, top_k=TOP_K, max_tokens=MAX_TOKENS, d
                     active.set_attributes({'workshop.kind': 'retrieval', 'workshop.question': query,
                         'workshop.output': '\n'.join(name for _, name, _ in documents)})
                 return documents
+
+            if trace_retrieval:
+                retrieve_documents = tracer.start_as_current_span('retrieve-documents')(retrieve_documents)
 
             tools = [{'type': 'function', 'function': {'name': 'search_support_notes',
                 'description': 'Search the local support notes for information needed to answer the question.',
@@ -115,6 +117,8 @@ def main(argv=None):
     parser.add_argument('--details', action='store_true', help='Show saved run and native record identifiers')
     parser.add_argument('--top-k', '--context-limit', type=int, default=TOP_K, dest='top_k')
     parser.add_argument('--max-tokens', type=int, default=MAX_TOKENS)
+    parser.add_argument('--trace-retrieval', action='store_true',
+        help='Record the actual local document search as an OpenTelemetry child span')
     args = parser.parse_args(argv)
     load_local_env()
     provider = None
@@ -128,7 +132,8 @@ def main(argv=None):
         provider.add_span_processor(TrackSpans(exporter))
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         tracer = provider.get_tracer('devnet.workshop')
-        answer = answer_question(tracer, DevNetLLM.from_env(), args.question, args.top_k, args.max_tokens)
+        answer = answer_question(tracer, DevNetLLM.from_env(), args.question, args.top_k, args.max_tokens,
+            trace_retrieval=args.trace_retrieval)
         print('\nAnswer: ' + answer)
         if not provider.force_flush() or not exporter.receipts:
             raise RuntimeError('SDK spans are incomplete; inspect the unfinished request before rerunning')

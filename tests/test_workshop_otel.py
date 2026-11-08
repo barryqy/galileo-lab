@@ -98,8 +98,10 @@ class WorkshopTests(unittest.TestCase):
         self.tracer = self.provider.get_tracer('workshop-tests')
         self.addCleanup(self.provider.shutdown)
 
-    def run_question(self, *, model=None, question='Which model latency usage and errors should I check?', top_k=3):
-        result = app.answer_question(self.tracer, model or Model(), question, top_k, 120, self.docs)
+    def run_question(self, *, model=None, question='Which model latency usage and errors should I check?',
+            top_k=3, trace_retrieval=False):
+        result = app.answer_question(self.tracer, model or Model(), question, top_k, 120, self.docs,
+            trace_retrieval=trace_retrieval)
         self.assertTrue(self.provider.force_flush())
         return result, self.exporter.receipts[-1]
 
@@ -130,25 +132,91 @@ class WorkshopTests(unittest.TestCase):
         self.assertTrue(self.client.payloads[0]['include_trace_ids'])
         self.assertTrue(self.client.payloads[0]['reliable'])
 
-    def test_missing_learner_decorator_does_not_synthesize_retrieval_span(self):
-        _, receipt = self.run_question()
+    def test_default_search_keeps_minimal_trace_and_positional_arguments(self):
+        model = Model()
+        app.answer_question(self.tracer, model, 'latency usage errors', 1, 120, self.docs)
+        receipt = self.exporter.receipts[-1]
         self.assertEqual([s['name'] for s in receipt['spans']], ['answer-question', 'support-agent', 'support-model-step', 'support-answer'])
         self.assertEqual(receipt['retrieval_status'], 'not-instrumented')
-
-    def test_uncommenting_decorator_instruments_actual_retrieval_body(self):
-        source = Path(app.__file__).read_text().replace('# @tracer.start_as_current_span("retrieve-documents")',
-            '@tracer.start_as_current_span("retrieve-documents")')
-        namespace = {'__file__': app.__file__, '__name__': 'edited_workshop'}
-        exec(compile(source, str(app.__file__), 'exec'), namespace)
-        model = Model()
-        namespace['answer_question'](self.tracer, model, 'latency usage errors', 1, 120, self.docs)
-        receipt = self.exporter.receipts[-1]
-        self.assertEqual(receipt['retrieval_status'], 'instrumented')
-        self.assertEqual([s['name'] for s in receipt['spans']], ['answer-question', 'support-agent', 'support-model-step', 'retrieve-documents', 'support-answer'])
         self.assertIn('latency.md', model.calls[-1][0][-1]['content'])
         self.assertNotIn('privacy.md', model.calls[-1][0][-1]['content'])
+
+    def test_retrieval_option_instruments_actual_search_body(self):
+        model = Model()
+        _, receipt = self.run_question(model=model, question='latency usage errors', top_k=1,
+            trace_retrieval=True)
+        self.assertEqual(receipt['retrieval_status'], 'instrumented')
+        self.assertEqual([s['name'] for s in receipt['spans']], ['answer-question', 'support-agent', 'support-model-step', 'retrieve-documents', 'support-answer'])
+        self.assertEqual(len(model.calls), 2)
+        self.assertIn('latency.md', model.calls[-1][0][-1]['content'])
+        self.assertNotIn('privacy.md', model.calls[-1][0][-1]['content'])
+        retrieval = receipt['spans'][3]
+        self.assertEqual(retrieval['type'], 'tool')
+        self.assertEqual(retrieval['attributes']['workshop.question'], 'latency usage errors')
+        self.assertEqual(retrieval['attributes']['workshop.output'], 'latency.md')
+        self.assertGreater(retrieval['duration_ns'], 0)
         for span in receipt['spans'][2:]:
             self.assertEqual(span['otel_parent_span_id'], receipt['spans'][1]['otel_span_id'])
+
+    def test_retrieval_option_applies_only_to_its_request(self):
+        _, traced = self.run_question(trace_retrieval=True)
+        _, plain = self.run_question()
+        self.assertEqual(traced['retrieval_status'], 'instrumented')
+        self.assertEqual(plain['retrieval_status'], 'not-instrumented')
+        self.assertEqual(plain['request']['documents'], traced['request']['documents'])
+        self.assertEqual(plain['usage'], traced['usage'])
+
+    def test_retrieval_option_records_actual_search_failure(self):
+        for file in self.docs.glob('*.md'):
+            file.unlink()
+        model = Model()
+        with self.assertRaisesRegex(ValueError, 'documents'):
+            self.run_question(model=model, trace_retrieval=True)
+        receipt = self.exporter.receipts[-1]
+        retrieval = receipt['spans'][-1]
+        self.assertEqual(retrieval['name'], 'retrieve-documents')
+        self.assertEqual(retrieval['status'], 'ERROR')
+        self.assertEqual(retrieval['events'][0]['attributes']['exception.type'], 'ValueError')
+        self.assertEqual(receipt['status'], 'error')
+        self.assertIsNone(receipt['answer'])
+        self.assertEqual(len(model.calls), 1)
+
+    def run_app(self, args):
+        model = Model()
+        with patch.object(app, 'STATE_DIR', self.state), patch.object(app, 'load_local_env'), \
+                patch.object(app, 'client_or_exit', return_value=self.client), \
+                patch.object(app, 'ensure_project_and_stream', return_value=self.destination), \
+                patch.object(app.DevNetLLM, 'from_env', return_value=model):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                result = app.main(args)
+        self.assertEqual(result, 0)
+        return model, evidence.load_run(self.state), output.getvalue()
+
+    def test_app_cli_defaults_keep_minimal_trace(self):
+        model, receipt, _ = self.run_app([])
+        self.assertEqual(receipt['retrieval_status'], 'not-instrumented')
+        self.assertEqual(receipt['request']['question'], app.QUESTION)
+        self.assertEqual(receipt['request']['top_k'], 3)
+        self.assertEqual(receipt['request']['max_tokens'], 180)
+        self.assertEqual(len(model.calls), 2)
+
+    def test_app_cli_forwards_retrieval_and_existing_request_options(self):
+        question = 'latency usage errors'
+        model, receipt, output = self.run_app(['--trace-retrieval', '--question', question,
+            '--top-k', '1', '--max-tokens', '73', '--details'])
+        self.assertEqual(receipt['retrieval_status'], 'instrumented')
+        self.assertEqual(receipt['request']['question'], question)
+        self.assertEqual(receipt['request']['documents'], ['latency.md'])
+        self.assertEqual(receipt['request']['top_k'], 1)
+        self.assertEqual(receipt['request']['max_tokens'], 73)
+        self.assertEqual([limit for _, limit in model.calls], [73, 73])
+        self.assertIn(receipt['native_trace_id'], output)
+
+    def test_app_cli_preserves_context_limit_alias(self):
+        _, receipt, _ = self.run_app(['--trace-retrieval', '--context-limit', '2'])
+        self.assertEqual(receipt['retrieval_status'], 'instrumented')
+        self.assertEqual(receipt['request']['top_k'], 2)
+        self.assertEqual(receipt['request']['document_count'], 2)
 
     def test_real_search_changes_prompt_with_top_k(self):
         model = Model()
