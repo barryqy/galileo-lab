@@ -164,6 +164,41 @@ class GuidedTests(unittest.TestCase):
         self.assertIn('no model span', output)
         self.assertEqual(self.client.reads, ['deny'])
 
+    def test_control_denied_accepts_normal_wire_metadata_after_upload(self):
+        self.navigation('guardrail', cases={'denied': {'trace_id': 'wire-deny', 'decision': 'DENY'}})
+        trace = {'id': 'wire-deny', 'session_id': 'wire-session', 'log_stream_id': 'stream',
+            'user_metadata': {'decision': 'DENY', 'protected_calls': 0},
+            'spans': [{'id': 'policy', 'type': 'tool', 'user_metadata': {'protected_calls': 0}}]}
+        self.client.post('/v2/projects/project/traces', json={'traces': [trace]})
+        self.assertEqual(self.client.traces['wire-deny']['user_metadata']['protected_calls'], '0')
+        output = self.invoke('open-ui', '--checkpoint', 'control-denied')
+        self.assertIn('traceId=wire-deny', output)
+        self.assertIn('protected_calls 0', output)
+        self.assertEqual(output.count('https://'), 1)
+
+    def test_control_denied_rejects_nonzero_missing_invalid_and_boolean_counts(self):
+        self.navigation('guardrail', cases={'denied': {'trace_id': 'deny', 'decision': 'DENY'}})
+        for value in (1, '1', -1, '-1', None, '', '00', '0.0', ' 0', 'false', False, True, 0.0, [], {}):
+            with self.subTest(protected_calls=value):
+                metadata = {'decision': 'DENY'}
+                if value is not None:
+                    metadata['protected_calls'] = value
+                self.client.traces['deny'] = {'id': 'deny', 'user_metadata': metadata,
+                    'spans': [{'id': 'policy', 'type': 'tool'}]}
+                with self.assertRaisesRegex(ValueError, 'DENY'):
+                    self.invoke('open-ui', '--checkpoint', 'control-denied')
+                self.assertNotIn('https://', self.output.getvalue())
+
+    def test_control_denied_rejects_model_span_with_either_zero_representation(self):
+        self.navigation('guardrail', cases={'denied': {'trace_id': 'deny', 'decision': 'DENY'}})
+        for value in (0, '0'):
+            with self.subTest(protected_calls=value):
+                self.client.traces['deny'] = {'id': 'deny',
+                    'user_metadata': {'decision': 'DENY', 'protected_calls': value},
+                    'spans': [{'id': 'protected-model', 'type': 'llm'}]}
+                with self.assertRaisesRegex(ValueError, 'DENY'):
+                    self.invoke('open-ui', '--checkpoint', 'control-denied')
+
     def test_control_denied_refuses_mismatched_decision(self):
         self.navigation('guardrail', cases={'denied': {'trace_id': 'wrong', 'decision': 'ALLOW'}})
         with self.assertRaisesRegex(ValueError, 'DENY'):

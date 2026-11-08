@@ -234,7 +234,9 @@ def print_checkpoint(client, *, state_dir, checkpoint, run_id=None):
             metadata = trace.get('user_metadata') or {}
             if metadata.get('decision') != decision:
                 raise ValueError(f'Saved policy trace is not {decision}')
-            if decision == 'DENY' and (metadata.get('protected_calls') != 0
+            calls = metadata.get('protected_calls')
+            zero_calls = type(calls) in (int, str) and str(calls) == '0'
+            if decision == 'DENY' and (not zero_calls
                     or any(span.get('type') == 'llm' for span in trace.get('spans') or [])):
                 raise ValueError('DENY evidence contains protected model execution')
         row = dict(row, session_id=trace.get('session_id') or saved.get('session_id'))
