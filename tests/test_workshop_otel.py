@@ -2,6 +2,7 @@ import contextlib
 import copy
 import io
 import json
+import struct
 from pathlib import Path
 import tempfile
 import unittest
@@ -73,6 +74,9 @@ class Model:
 class WorkshopTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(app, 'The visible SDK app and exporter are missing')
+        pause = patch('workshop_telemetry.time.sleep')
+        pause.start()
+        self.addCleanup(pause.stop)
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -424,6 +428,32 @@ class WorkshopTests(unittest.TestCase):
         self.assertTrue(url.endswith('/agent-streams/' + self.destination['log_stream_id'] + '?view=graph'))
         self.assertNotIn('/sessions/', url)
         self.assertIn('shared stream', output.getvalue())
+
+    def test_partly_indexed_children_remain_pending_instead_of_failed(self):
+        original = self.client.get
+        def partial(path):
+            record = original(path)
+            record['spans'] = []
+            return record
+        with patch.object(self.client, 'get', side_effect=partial):
+            _, receipt = self.run_question()
+        self.assertEqual(receipt['readback_status'], 'pending')
+        self.assertIn('indexing', receipt['delivery_error'])
+        self.assertEqual(len(self.client.payloads), 1)
+        self.assertEqual(evidence.inspect_run(self.client, receipt)['readback_status'], 'verified')
+
+    def test_native_float32_duration_storage_preserves_exact_sdk_receipt(self):
+        _, receipt = self.run_question()
+        original = receipt['spans'][0]['duration_ns']
+        for record in telemetry._flatten(self.client.traces[receipt['native_trace_id']]).values():
+            value = record['metrics']['duration_ns']
+            record['metrics']['duration_ns'] = int(struct.unpack('f', struct.pack('f', value))[0])
+        self.assertEqual(evidence.inspect_run(self.client, receipt)['duration_ns'], original)
+        for saved, stored in ((3541307570, 3541307648), (3540659178, 3540659200), (1624403837, 1624403840), (1915116139, 1915116160)):
+            self.assertTrue(telemetry.duration_matches(saved, stored))
+            self.assertFalse(telemetry.duration_matches(saved, stored + 1024))
+        self.assertFalse(telemetry.duration_matches(original, None))
+        self.assertFalse(telemetry.duration_matches(original, True))
 
     def test_local_inspection_never_calls_network(self):
         _, receipt = self.run_question()

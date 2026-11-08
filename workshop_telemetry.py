@@ -1,6 +1,9 @@
 """Real SDK spans exported through the Workshop JSON API, rather than OTLP."""
 
 import json
+import math
+import struct
+import time
 import os
 from pathlib import Path
 import tempfile
@@ -13,6 +16,24 @@ from opentelemetry.trace import StatusCode
 
 from galileo_client import GalileoApiError
 from observability_tests import TOKEN_FIELDS, _pii_labels
+
+
+class PendingRecords(ValueError):
+    pass
+
+
+def duration_matches(sdk_value, stored_value):
+    if (type(sdk_value) is not int or sdk_value < 0 or type(stored_value) not in (int, float)
+            or not math.isfinite(stored_value) or stored_value < 0):
+        return False
+    if sdk_value == stored_value:
+        return True
+    try:
+        # The native metrics store uses Float32; SDK nanoseconds stay exact in the receipt.
+        normalized = struct.unpack('!f', struct.pack('!f', sdk_value))[0]
+    except (OverflowError, struct.error):
+        return False
+    return stored_value == normalized
 
 
 def write_json(path, payload):
@@ -219,6 +240,8 @@ class WorkshopExporter(SpanExporter):
             trace = read_back(self.client, receipt)
             receipt['readback_status'] = 'verified'
             receipt['session_id'] = trace.get('session_id')
+        except PendingRecords as exc:
+            receipt.update(readback_status='pending', delivery_error=str(exc))
         except GalileoApiError as exc:
             receipt['readback_status'] = 'pending' if exc.status_code in (404, 503) else 'failed'
             receipt['delivery_error'] = 'Trace is still indexing; run workshop_results.py inspect without calling the model again.' if receipt['readback_status'] == 'pending' else str(exc)
@@ -234,6 +257,19 @@ def _flatten(trace):
 
 
 def read_back(client, receipt):
+    for attempt in range(3):
+        try:
+            return _read_once(client, receipt)
+        except PendingRecords:
+            if attempt == 2:
+                raise
+        except GalileoApiError as exc:
+            if exc.status_code not in (404, 503) or attempt == 2:
+                raise
+        time.sleep(0.2 * (attempt + 1))
+
+
+def _read_once(client, receipt):
     destination = receipt['destination']
     if client.base_url.rstrip('/') != destination['api_base_url'].rstrip('/'):
         raise ValueError('Current API destination differs from this saved run')
@@ -249,7 +285,7 @@ def read_back(client, receipt):
     for saved in receipt['spans']:
         record = records.get(saved['native_id'])
         if record is None:
-            raise ValueError('Stored record is missing an SDK span; retry inspect while indexing, without rerunning the app')
+            raise PendingRecords('SDK spans are still indexing; retry inspect without rerunning the app')
         meta = record.get('user_metadata') or {}
         if (meta.get('otel.trace_id') != receipt['otel_trace_id']
                 or meta.get('otel.span_id') != saved['otel_span_id']
@@ -263,6 +299,8 @@ def read_back(client, receipt):
             if field in original and record.get(field) != original[field]:
                 raise ValueError(f'Stored {field} does not match the actual SDK request')
         for field, value in original['metrics'].items():
-            if (record.get('metrics') or {}).get(field) != value:
+            stored = (record.get('metrics') or {}).get(field)
+            matches = duration_matches(value, stored) if field == 'duration_ns' else type(stored) in (int, float) and stored == value
+            if not matches:
                 raise ValueError('Stored measurement does not match the actual SDK/provider value')
     return trace
