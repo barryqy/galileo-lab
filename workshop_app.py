@@ -114,12 +114,21 @@ def answer_question(tracer, llm, question, top_k=TOP_K, max_tokens=MAX_TOKENS, d
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--question', default=QUESTION)
+    parser.add_argument('--interactive', action='store_true', help='Enter an optional question in the terminal')
     parser.add_argument('--details', action='store_true', help='Show saved run and native record identifiers')
     parser.add_argument('--top-k', '--context-limit', type=int, default=TOP_K, dest='top_k')
     parser.add_argument('--max-tokens', type=int, default=MAX_TOKENS)
     parser.add_argument('--trace-retrieval', action='store_true',
         help='Record the actual local document search as an OpenTelemetry child span')
     args = parser.parse_args(argv)
+    if args.interactive:
+        try:
+            question = input('Question (press Enter to keep the supplied question): ')
+        except (EOFError, KeyboardInterrupt):
+            print('\nQuestion entry cancelled; no request was sent.', file=sys.stderr)
+            return 1
+        if question.strip():
+            args.question = question
     load_local_env()
     provider = None
     try:

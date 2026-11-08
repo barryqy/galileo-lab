@@ -77,17 +77,24 @@ Inspect parent metadata `pii_input`, `pii_output` and `pii_detector`. The email/
 
 ### Optional questions and command options
 
-The supplied questions complete the exercises. To try your own question, replace only the quoted text in this optional command:
+The supplied questions complete the exercises. To try your own question, run this optional block, then enter a question in the terminal. Press Enter to keep the supplied question. Quotes are treated as part of your question. Ctrl+C cancels before a request is sent.
 
 ```bash
 cd /home/developer/src/galileo-lab || exit 1
-python3 workshop_app.py --trace-retrieval --question 'How can I compare two assistant releases?'
+python3 workshop_app.py --interactive --trace-retrieval
+```
+
+After the answer appears, open that request:
+
+```bash
+cd /home/developer/src/galileo-lab || exit 1
 python3 workshop_results.py open --view response
 ```
 
 | Option | Behavior |
 | --- | --- |
 | `--trace-retrieval` | Add a real SDK child span around document search for this request; off by default |
+| `--interactive` | Enter a question in the terminal; Enter keeps the default or the value supplied with `--question` |
 | `--question 'QUESTION'` | Use a custom question; the default asks which signals to check for a slow assistant |
 | `--top-k N` or `--context-limit N` | Include up to N matched documents; default 3 |
 | `--max-tokens N` | Set the answer limit passed to each model call; default 180 |

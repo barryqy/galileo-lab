@@ -218,6 +218,33 @@ class WorkshopTests(unittest.TestCase):
         self.assertEqual(receipt['request']['top_k'], 2)
         self.assertEqual(receipt['request']['document_count'], 2)
 
+    def test_interactive_question_preserves_quotes_and_combines_with_tracing(self):
+        question = 'Which "latency" signals should I check? Don\'t include \'contact details\'.'
+        with patch('builtins.input', return_value=question):
+            model, receipt, _ = self.run_app(['--interactive', '--trace-retrieval'])
+        self.assertEqual(receipt['request']['question'], question)
+        self.assertEqual(model.calls[0][0][-1]['content'], question)
+        self.assertEqual(receipt['retrieval_status'], 'instrumented')
+
+    def test_interactive_blank_question_keeps_default_or_question_option(self):
+        for reply, args, expected in [('', [], app.QUESTION),
+                ('   ', ['--question', 'latency usage errors'], 'latency usage errors')]:
+            with self.subTest(reply=reply), patch('builtins.input', return_value=reply):
+                _, receipt, _ = self.run_app(['--interactive', *args])
+            self.assertEqual(receipt['request']['question'], expected)
+
+    def test_interactive_cancellation_stops_before_client_or_model_activity(self):
+        for error in (EOFError, KeyboardInterrupt):
+            with self.subTest(error=error.__name__), patch('builtins.input', side_effect=error), \
+                    patch.object(app, 'client_or_exit') as client, \
+                    patch.object(app.DevNetLLM, 'from_env') as model, \
+                    contextlib.redirect_stderr(io.StringIO()) as output:
+                self.assertEqual(app.main(['--interactive']), 1)
+            client.assert_not_called()
+            model.assert_not_called()
+            self.assertIn('cancelled', output.getvalue())
+            self.assertIn('no request was sent', output.getvalue())
+
     def test_real_search_changes_prompt_with_top_k(self):
         model = Model()
         self.run_question(model=model, top_k=1)
