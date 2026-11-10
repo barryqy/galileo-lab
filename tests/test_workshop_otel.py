@@ -181,8 +181,8 @@ class WorkshopTests(unittest.TestCase):
         self.assertIsNone(receipt['answer'])
         self.assertEqual(len(model.calls), 1)
 
-    def run_app(self, args):
-        model = Model()
+    def run_app(self, args, model=None):
+        model = model or Model()
         with patch.object(app, 'STATE_DIR', self.state), patch.object(app, 'load_local_env'), \
                 patch.object(app, 'client_or_exit', return_value=self.client), \
                 patch.object(app, 'ensure_project_and_stream', return_value=self.destination), \
@@ -371,7 +371,7 @@ class WorkshopTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'TOP_K'):
             evidence.compare_runs(self.client, before, before)
 
-    def test_selection_uses_successful_runs_and_privacy_filter(self):
+    def test_selection_keeps_newest_run_for_response_and_trace_views(self):
         _, before = self.run_question()
         _, privacy = self.run_question(question='Contact privacy alex@example.com')
         selected = evidence.load_run(self.state, view='response')
@@ -380,6 +380,229 @@ class WorkshopTests(unittest.TestCase):
         self.assertEqual(selected['run_id'], privacy['run_id'])
         with self.assertRaises(ValueError):
             evidence.load_run(self.state, run_id='../escape')
+        with self.assertRaisesRegex(RuntimeError, 'model unavailable'):
+            self.run_question(model=Model(fail=True))
+        failed = self.exporter.receipts[-1]
+        for view in (None, 'response', 'trace'):
+            self.assertEqual(evidence.load_run(self.state, view=view)['run_id'], failed['run_id'])
+        with self.assertRaisesRegex(ValueError, 'no successful model result'):
+            evidence.open_view(self.client, evidence.load_run(self.state, view='response'), 'response')
+
+    def test_generic_privacy_keeps_latest_contact_request_without_skipping_its_failure(self):
+        _, privacy = self.run_question(question='Contact privacy alex@example.com')
+        self.run_question(question='Which latency signals should I inspect?')
+        self.assertEqual(evidence.load_run(self.state, view='privacy')['run_id'], privacy['run_id'])
+        with patch.object(evidence, 'STATE_DIR', self.state), patch.object(evidence, 'client_or_exit', return_value=self.client):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(evidence.main(['open', '--view', 'privacy']), 0)
+        self.assertIn('traceId=' + privacy['native_trace_id'], output.getvalue())
+        with self.assertRaisesRegex(RuntimeError, 'model unavailable'):
+            self.run_question(model=Model(fail=True), question='Contact privacy new@example.com')
+        failed = self.exporter.receipts[-1]
+        selected = evidence.load_run(self.state, view='privacy')
+        self.assertEqual(selected['run_id'], failed['run_id'])
+        with self.assertRaisesRegex(ValueError, 'no successful model result'):
+            evidence.open_view(self.client, selected, 'privacy')
+
+    def test_labels_revisit_exact_runs_without_network_and_missing_labels_do_not_fall_back(self):
+        _, first, _ = self.run_app(['--label', 'first'])
+        _, traced, _ = self.run_app(['--label', 'traced', '--trace-retrieval'])
+        self.run_question(question='Contact privacy alex@example.com')
+        with patch.object(evidence, 'STATE_DIR', self.state), \
+                patch.object(evidence, 'client_or_exit', side_effect=AssertionError('network')):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(evidence.main(['list']), 0)
+                self.assertEqual(evidence.main(['inspect', '--local', '--run', 'first']), 0)
+                self.assertEqual(evidence.main(['label', 'privacy']), 0)
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(evidence.main(['inspect', '--local', '--run', 'context']), 1)
+        self.assertIn(first['run_id'], output.getvalue())
+        self.assertIn('first', output.getvalue())
+        self.assertEqual(evidence.load_run(self.state, 'traced')['run_id'], traced['run_id'])
+        self.assertEqual(evidence.load_run(self.state, 'privacy')['request']['question'], 'Contact privacy alex@example.com')
+
+    def test_comparison_open_uses_saved_after_even_after_newer_privacy_and_pair(self):
+        _, before = self.run_question(top_k=3, trace_retrieval=True)
+        _, after = self.run_question(top_k=1, trace_retrieval=True)
+        with patch.object(evidence, 'STATE_DIR', self.state), patch.object(evidence, 'client_or_exit', return_value=self.client):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(evidence.main(['compare', '--before', before['run_id'], '--after', after['run_id']]), 0)
+            self.run_question(top_k=2, trace_retrieval=True)
+            self.run_question(question='Contact privacy alex@example.com')
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(evidence.main(['open', '--comparison', '--view', 'response']), 0)
+        self.assertIn('traceId=' + after['native_trace_id'], output.getvalue())
+
+    def test_requested_tracing_survives_model_choosing_no_search(self):
+        for enabled in (False, True):
+            model = Model()
+            model.chat_step = lambda messages, *, tools, max_tokens: {'role': 'assistant', 'content': 'Check the timeline.'}
+            _, receipt = self.run_question(model=model, trace_retrieval=enabled)
+            self.assertIs(receipt['request'].get('trace_retrieval'), enabled)
+            self.assertEqual(receipt['retrieval_status'], 'enabled-no-search' if enabled else 'not-instrumented')
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                evidence.print_results(receipt)
+            self.assertIn('Search: not called by the model', output.getvalue())
+
+    def test_legacy_empty_search_keeps_its_recorded_retrieval_status(self):
+        saved = {'request': {'document_count': 0}, 'retrieval_status': 'instrumented'}
+        self.assertIn('Search: recorded in a retrieval span', telemetry.retrieval_summary(saved))
+
+    def test_legacy_zero_documents_do_not_prove_the_tool_was_skipped(self):
+        saved = {'request': {'document_count': 0}, 'retrieval_status': 'not-instrumented'}
+        self.assertIn('Search: unknown (legacy run)', telemetry.retrieval_summary(saved))
+
+    def test_compare_checks_requested_tracing_without_using_search_spans_as_proxy(self):
+        model = Model()
+        model.chat_step = lambda messages, *, tools, max_tokens: {'role': 'assistant', 'content': 'Check the timeline.'}
+        _, before = self.run_question(model=model, top_k=3, trace_retrieval=False)
+        _, after = self.run_question(model=model, top_k=1, trace_retrieval=True)
+        with self.assertRaisesRegex(ValueError, 'retrieval tracing'):
+            evidence.compare_runs(self.client, before, after)
+        after['request'].pop('trace_retrieval')
+        report = evidence.compare_runs(self.client, before, after)
+        self.assertIsNone(report['after']['trace_retrieval'])
+        self.assertIn('legacy', report['warnings'][0])
+
+    def test_length_finish_reason_is_visible_and_answer_is_preserved(self):
+        model = Model()
+        original = model.chat_step
+        def length_reply(messages, *, tools, max_tokens):
+            result = original(messages, tools=tools, max_tokens=max_tokens)
+            model.last_completion_metadata['finish_reason'] = 'tool_calls' if result.get('tool_calls') else 'length'
+            return result
+        model.chat_step = length_reply
+        _, before = self.run_question(model=model, top_k=3)
+        _, after = self.run_question(model=model, top_k=1)
+        self.assertEqual(after.get('finish_reason'), 'length')
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            evidence.print_results(after)
+        self.assertIn('Finish reason: length', output.getvalue())
+        self.assertIn('answer may be incomplete', output.getvalue())
+        report = evidence.compare_runs(self.client, before, after)
+        self.assertEqual(report['after']['finish_reason'], 'length')
+        self.assertIn('answer may be incomplete', report['after']['warning'])
+        self.assertEqual(report['after']['answer'], after['answer'])
+        legacy = copy.deepcopy(after)
+        legacy.pop('finish_reason')
+        old_row = evidence.compare_runs(self.client, before, legacy)['after']
+        self.assertEqual(old_row['finish_reason'], 'length')
+        self.assertIn('answer may be incomplete', old_row['warning'])
+
+    def test_app_prints_length_warning_without_replacing_the_saved_answer(self):
+        model = Model()
+        complete = model.complete
+        def truncated(messages, *, max_tokens):
+            answer = complete(messages, max_tokens=max_tokens)
+            model.last_completion_metadata['finish_reason'] = 'length'
+            return answer
+        model.complete = truncated
+        _, receipt, output = self.run_app(['--label', 'first'], model=model)
+        self.assertIn('Finish reason: length', output)
+        self.assertIn('answer may be incomplete', output)
+        self.assertIn('Answer: ' + receipt['answer'], output)
+
+    def test_failed_label_does_not_resolve_to_an_older_success(self):
+        _, success = self.run_question()
+        with patch.object(app, 'STATE_DIR', self.state), patch.object(app, 'load_local_env'), \
+                patch.object(app, 'client_or_exit', return_value=self.client), \
+                patch.object(app, 'ensure_project_and_stream', return_value=self.destination), \
+                patch.object(app.DevNetLLM, 'from_env', return_value=Model(fail=True)), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(app.main(['--label', 'first']), 1)
+        failed = evidence.load_run(self.state, 'first')
+        self.assertEqual(failed['model_status'], 'error')
+        self.assertNotEqual(failed['run_id'], success['run_id'])
+        with self.assertRaisesRegex(ValueError, 'no successful model result'):
+            evidence.open_view(None, failed, 'response')
+
+    def test_missing_comparison_and_missing_label_target_never_choose_latest(self):
+        _, receipt = self.run_question()
+        with patch.object(evidence, 'STATE_DIR', self.state), \
+                patch.object(evidence, 'client_or_exit', side_effect=AssertionError('network')):
+            with contextlib.redirect_stderr(io.StringIO()) as output:
+                self.assertEqual(evidence.main(['open', '--comparison', '--view', 'response']), 1)
+            self.assertIn('No saved comparison', output.getvalue())
+        telemetry.label_run(self.state, 'first', str(uuid.uuid4()))
+        with self.assertRaisesRegex(ValueError, 'not saved'):
+            evidence.load_run(self.state, 'first')
+        self.assertEqual(evidence.load_run(self.state)['run_id'], receipt['run_id'])
+
+    def test_comparison_keeps_exact_ids_when_checkpoint_labels_move(self):
+        _, before, _ = self.run_app(['--label', 'traced', '--trace-retrieval'])
+        _, after, _ = self.run_app(['--label', 'context', '--trace-retrieval', '--top-k', '1'])
+        with patch.object(evidence, 'STATE_DIR', self.state), patch.object(evidence, 'client_or_exit', return_value=self.client):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(evidence.main(['compare', '--before', 'traced', '--after', 'context']), 0)
+            _, newer, _ = self.run_app(['--label', 'context', '--trace-retrieval', '--top-k', '2'])
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(evidence.main(['open', '--comparison', '--view', 'response']), 0)
+        saved = json.loads((self.state / 'otel/comparison.json').read_text())
+        self.assertEqual(saved['before']['run_id'], before['run_id'])
+        self.assertEqual(saved['after']['run_id'], after['run_id'])
+        self.assertIn('traceId=' + after['native_trace_id'], output.getvalue())
+        self.assertNotIn('traceId=' + newer['native_trace_id'], output.getvalue())
+
+    def test_legacy_receipt_can_be_labelled_without_rewriting_its_raw_payload(self):
+        _, receipt = self.run_question()
+        legacy = copy.deepcopy(receipt)
+        legacy.pop('finish_reason')
+        legacy['request'].pop('trace_retrieval')
+        legacy['request'].pop('search_called')
+        path = self.state / 'otel/runs' / (legacy['run_id'] + '.json')
+        telemetry.write_json(path, legacy)
+        original = path.read_bytes()
+        with patch.object(evidence, 'STATE_DIR', self.state), \
+                patch.object(evidence, 'client_or_exit', side_effect=AssertionError('network')):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(evidence.main(['label', 'first']), 0)
+                self.assertEqual(evidence.main(['inspect', '--local', '--run', 'first']), 0)
+                self.assertEqual(evidence.main(['json', '--run', 'first']), 0)
+        self.assertIn('unknown (legacy run)', output.getvalue())
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_failed_label_write_keeps_existing_receipt_bytes(self):
+        _, receipt = self.run_question()
+        path = self.state / 'otel/runs' / (receipt['run_id'] + '.json')
+        original = path.read_bytes()
+        with patch.object(evidence, 'STATE_DIR', self.state), \
+                patch.object(telemetry, 'write_json', side_effect=OSError('labels not writable')), \
+                contextlib.redirect_stderr(io.StringIO()) as output:
+            self.assertEqual(evidence.main(['label', 'first', '--run', receipt['run_id']]), 1)
+        self.assertIn('labels not writable', output.getvalue())
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_app_label_write_failure_preserves_delivery_and_names_the_exact_new_run(self):
+        _, first, _ = self.run_app(['--label', 'first'])
+        old_path = self.state / 'otel/runs' / (first['run_id'] + '.json')
+        original_bytes = old_path.read_bytes()
+        write = telemetry.write_json
+        def refuse_label(path, payload):
+            if Path(path).name == 'labels.json':
+                raise OSError('labels not writable')
+            write(path, payload)
+        with patch.object(app, 'STATE_DIR', self.state), patch.object(app, 'load_local_env'), \
+                patch.object(app, 'client_or_exit', return_value=self.client), \
+                patch.object(app, 'ensure_project_and_stream', return_value=self.destination), \
+                patch.object(app.DevNetLLM, 'from_env', return_value=Model()), \
+                patch.object(telemetry, 'write_json', side_effect=refuse_label), \
+                contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(app.main(['--label', 'first']), 1)
+        latest = evidence.load_run(self.state)
+        self.assertNotEqual(latest['run_id'], first['run_id'])
+        self.assertEqual(latest['upload_status'], 'accepted')
+        self.assertEqual(latest['readback_status'], 'verified')
+        self.assertEqual(latest['label_status'], 'failed')
+        self.assertIn('labels not writable', latest['label_error'])
+        self.assertEqual(len(self.client.payloads), 2)
+        self.assertIn('labels not writable', errors.getvalue())
+        self.assertNotIn('SDK spans are incomplete', errors.getvalue())
+        self.assertNotIn('Saved checkpoint:', output.getvalue())
+        self.assertNotIn('--run first', output.getvalue())
+        self.assertIn('--run ' + latest['run_id'], output.getvalue())
+        self.assertEqual(evidence.load_run(self.state, 'first')['run_id'], first['run_id'])
+        self.assertEqual(old_path.read_bytes(), original_bytes)
 
     def test_remote_measurements_cannot_drift_from_exported_sdk_values(self):
         _, receipt = self.run_question()

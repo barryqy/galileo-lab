@@ -3,6 +3,7 @@
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 import time
@@ -642,6 +643,149 @@ def cmd_experiment(args: argparse.Namespace) -> None:
     print("Logged 8 evaluation traces with dataset references and application metrics.")
 
 
+def _experiment_records(client, project_id, experiment_id, trace_ids):
+    cases = {}
+    pending = []
+    for trace_id in trace_ids:
+        trace_id = str(uuid.UUID(trace_id))
+        try:
+            row = client.get(f'/v2/projects/{project_id}/traces/{trace_id}')
+        except GalileoApiError as exc:
+            if exc.status_code not in (404, 503):
+                raise
+            pending.append(trace_id)
+            continue
+        if not isinstance(row, dict) or row.get('id') != trace_id:
+            raise ValueError('Experiment API returned a different or missing trace ID')
+        if row.get('type') == 'stub_trace':
+            pending.append(trace_id)
+            continue
+        if (row.get('type') != 'trace' or row.get('project_id') != project_id
+                or row.get('run_id') != experiment_id):
+            raise ValueError('Experiment trace does not match the saved project and experiment')
+        if row.get('is_complete') is False:
+            pending.append(trace_id)
+            continue
+        metadata = row.get('dataset_metadata') or {}
+        case_id = metadata.get('case_id') if isinstance(metadata, dict) else None
+        supplied = next((case for case in SUPPORT_CASES if case['case_id'] == case_id), None)
+        if supplied is None:
+            raise ValueError('Experiment trace has no matching dataset case_id')
+        if row.get('dataset_input') != supplied['input']:
+            raise ValueError(f'Experiment trace input does not match dataset case {case_id}')
+        if case_id in cases:
+            raise ValueError(f'Experiment contains multiple saved traces for case {case_id}')
+        cases[case_id] = row
+    return cases, pending
+
+
+def _experiment_metric_text(row, name):
+    if row is None:
+        return 'unavailable'
+    metric_info = row.get('metric_info') or {}
+    info = metric_info.get(name) if isinstance(metric_info, dict) else None
+    if isinstance(info, dict) and info.get('status_type') not in (None, 'success'):
+        return f"unavailable ({info['status_type']})"
+    metrics = row.get('metrics') or {}
+    value = metrics.get(name) if isinstance(metrics, dict) else None
+    if value is None and isinstance(info, dict) and info.get('status_type') == 'success':
+        value = info.get('value')
+    if type(value) not in (int, float) or not math.isfinite(value):
+        return 'unavailable'
+    return f'{value:g}' if name == 'tool_errors' else f'{value:.0%}'
+
+
+def _experiment_destination(saved_ids):
+    error = ('Cannot verify the saved experiment destination. Restore the matching '
+        '.galileo/navigation.json or create a new experiment comparison.')
+    try:
+        navigation = json.loads((STATE_DIR / 'navigation.json').read_text(encoding='utf-8'))
+        saved = navigation['experiment']
+        for variant, (experiment_id, _) in saved_ids.items():
+            if saved['variants'][variant]['experiment_id'] != experiment_id:
+                raise ValueError(error)
+        destination = saved['destination']
+        if not isinstance(destination['api_base_url'], str) or not destination['api_base_url']:
+            raise ValueError(error)
+        project_id = str(uuid.UUID(destination['project_id']))
+        return {'api_base_url': destination['api_base_url'], 'project_id': project_id}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise ValueError(error) from exc
+
+
+def cmd_experiment_results(args: argparse.Namespace) -> None:
+    guided_purpose(args, 'Read the saved refund experiments without running the cases again.')
+    if not EVALUATION_FILE.exists():
+        raise ValueError('No saved experiment comparison. Run experiment --guided first.')
+    report = json.loads(EVALUATION_FILE.read_text(encoding='utf-8'))
+    state = load_state()
+    if not isinstance(report, dict) or not isinstance(state, dict):
+        raise ValueError('Saved experiment comparison and state must contain JSON objects')
+    variants = report.get('variants') or {}
+    if not isinstance(variants, dict):
+        raise ValueError('Saved experiment variants must contain a JSON object')
+    saved_ids = {}
+    results = {}
+    pending = []
+    for variant in ('baseline', 'candidate'):
+        saved = variants.get(variant) or {}
+        if not isinstance(saved, dict):
+            raise ValueError(f'Saved {variant} experiment must contain a JSON object')
+        experiment_id = saved.get('experiment_id')
+        if not experiment_id or experiment_id != state.get(f'{variant}_experiment_id'):
+            raise ValueError(f'Saved {variant} experiment ID differs from the current comparison')
+        experiment_id = str(uuid.UUID(experiment_id))
+        trace_ids = saved.get('trace_ids')
+        if (not isinstance(trace_ids, list) or not trace_ids
+                or any(not isinstance(value, str) for value in trace_ids)
+                or len(set(trace_ids)) != len(trace_ids)):
+            raise ValueError(f'Saved {variant} experiment trace IDs are missing or duplicated')
+        saved_ids[variant] = (experiment_id, [str(uuid.UUID(value)) for value in trace_ids])
+    destination = _experiment_destination(saved_ids)
+    client = client_or_exit()
+    if destination['api_base_url'] != client.base_url:
+        raise ValueError('Current API destination differs from the saved experiments')
+    project_id = destination['project_id']
+    for variant, (experiment_id, trace_ids) in saved_ids.items():
+        results[variant], waiting = _experiment_records(client, project_id, experiment_id, trace_ids)
+        pending.extend(waiting)
+
+    print(f"Saved experiment comparison: {report.get('group', '(unnamed)')}")
+    print('Outputs and application metrics below were read from the API.')
+    print('The refund exercise uses simulated tools and deterministic responses.')
+    print('Higher completion, compliance and tool selection are better; fewer tool errors are better.')
+    matched = 0
+    for case in SUPPORT_CASES:
+        case_id = case['case_id']
+        baseline = results['baseline'].get(case_id)
+        candidate = results['candidate'].get(case_id)
+        if baseline is not None and candidate is not None:
+            matched += 1
+        print(f'\nCase: {case_id}')
+        stored = baseline if baseline is not None else candidate
+        if stored is not None:
+            print(f"  Question: {stored['dataset_input']}")
+            print(f"  Expected action (dataset): {stored.get('dataset_output') or 'unavailable'}")
+        for variant, row in [('baseline', baseline), ('candidate', candidate)]:
+            if row is None:
+                print(f'  {variant} output: unavailable (trace pending or unavailable)')
+                continue
+            output = row.get('output')
+            if output is None:
+                output = 'unavailable'
+            elif not isinstance(output, str):
+                output = json.dumps(output, ensure_ascii=False)
+            print(f'  {variant} output: {output}')
+        for name in RELEASE_THRESHOLDS:
+            before = _experiment_metric_text(baseline, name)
+            after = _experiment_metric_text(candidate, name)
+            print(f"  {name.replace('_', ' ')}: {before} -> {after}")
+    print(f'\nMatched cases: {matched}/{len(SUPPORT_CASES)}')
+    if pending or matched != len(SUPPORT_CASES):
+        raise RuntimeError('Some experiment traces are still indexing or unavailable. '
+            'Retry experiment-results --guided without rerunning experiment.')
+
+
 def cmd_agent_demo(args: argparse.Namespace) -> None:
     guided_purpose(args, 'Compare simulated refund tool paths and recorded model summaries.')
     client = client_or_exit()
@@ -1056,6 +1200,7 @@ def build_parser() -> argparse.ArgumentParser:
     experiment = sub.add_parser("experiment")
     experiment.add_argument("--name")
     experiment.set_defaults(func=cmd_experiment)
+    sub.add_parser('experiment-results').set_defaults(func=cmd_experiment_results)
     release_gate = sub.add_parser("release-gate")
     release_gate.add_argument("--variant", choices=("both", "baseline", "candidate"), default="both")
     release_gate.set_defaults(func=cmd_release_gate)
@@ -1072,7 +1217,7 @@ def build_parser() -> argparse.ArgumentParser:
     from guided_navigation import CHECKPOINTS
     sub.choices['open-ui'].add_argument('--checkpoint', choices=CHECKPOINTS)
     for command in ('run-tests', 'findings', 'compare-tests', 'guardrail', 'agent-demo',
-            'dataset', 'experiment', 'human-workflows', 'dashboard', 'trends', 'release-gate',
+            'dataset', 'experiment', 'experiment-results', 'human-workflows', 'dashboard', 'trends', 'release-gate',
             'llm-check', 'query-traces', 'log-traces', 'scorers', 'integrations', 'setup', 'barrybot'):
         sub.choices[command].add_argument('--guided', action='store_true',
             help='Show learner findings without automatic console links')

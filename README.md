@@ -10,7 +10,12 @@ Use the setup block in the DevNet guide or this block in the configured lab envi
 cd /home/developer/src || exit 1
 if [ ! -d galileo-lab ]; then git clone https://github.com/barryqy/galileo-lab.git || exit 1; fi
 cd /home/developer/src/galileo-lab || exit 1
-git pull --ff-only || exit 1
+if [ -n "$(git status --porcelain)" ]; then
+  printf 'Keep your local changes and use a fresh environment for this version.\n'
+  exit 1
+fi
+git fetch origin staging/otel-helper-20261109 || exit 1
+git checkout --detach FETCH_HEAD || exit 1
 if [ -n "${VIRTUAL_ENV:-}" ] && type deactivate >/dev/null 2>&1; then deactivate; fi
 python3 -m pip install uv --disable-pip-version-check || exit 1
 if [ ! -x .venv/bin/python ]; then python3 -m uv venv --python 3.12 .venv || exit 1; fi
@@ -22,12 +27,12 @@ Run the support agent with its supplied question, up to three support documents,
 
 ```bash
 cd /home/developer/src/galileo-lab || exit 1
-python3 workshop_app.py
-python3 workshop_results.py json --outline
-python3 workshop_results.py open --view trace
+python3 workshop_app.py --label first
+python3 workshop_results.py json --run first --outline
+python3 workshop_results.py open --run first --view response
 ```
 
-The model selects the `search_support_notes` tool, supplies its search query, and receives actual keyword search results from the small Markdown files in `support_docs/`. It can then answer or search again, up to three model rounds. The documents are supplied teaching material; the model calls, selected tool arguments, search work, and answers are real. A model or tool failure stops the request without a canned answer.
+The model can select `search_support_notes`, supply a search query, and receive keyword search results from the small Markdown files in `support_docs/`. It can answer or search again, up to three model rounds. It can also answer without searching. The documents are teaching material; the model calls, selected tool arguments, search work, and answers are real. A model or tool failure stops the request without a canned answer.
 
 The JSON outline shows actual request and operation fields from the saved payload, without full model messages. Use `json` without `--outline` to read the complete actual payload. Its root contains an agent node and the model calls. Open `--view agent` to explore the shared stream’s Agent graph; use Traces to inspect one request. `workshop_results.py` only reads saved requests and the API; it never calls the model.
 
@@ -37,12 +42,12 @@ The OpenTelemetry SDK creates the root `answer-question`, child `support-agent`,
 
 ```bash
 cd /home/developer/src/galileo-lab || exit 1
-python3 workshop_app.py --trace-retrieval
-python3 workshop_results.py json --outline
-python3 workshop_results.py open --view trace
+python3 workshop_app.py --trace-retrieval --label traced
+python3 workshop_results.py json --run traced --outline
+python3 workshop_results.py open --run traced --view trace
 ```
 
-The actual local search now appears as `retrieve-documents` under the agent. The flag applies the SDK decorator to the same search function: `retrieve_documents = tracer.start_as_current_span('retrieve-documents')(retrieve_documents)`. The SDK starts the span when the model-selected tool calls that function and ends it when the search returns or raises an error. Without the flag, the search still runs and the trace keeps its original request, agent, and model spans.
+When the model searches, the local search appears as `retrieve-documents` under the agent. The flag applies the SDK decorator to the same search function: `retrieve_documents = tracer.start_as_current_span('retrieve-documents')(retrieve_documents)`. The SDK starts the span when the tool calls that function and ends it when the search returns or raises an error. If the model skips search, the readout says tracing is enabled and search was not called. Without the flag, a search can still run, but it has no separate retrieval span.
 
 The app uses an explicit `TracerProvider`, a Resource with `service.name`, `TrackSpans` to notice unfinished work, and `SimpleSpanProcessor` to send ended spans to `WorkshopExporter`. It flushes and shuts down the provider after the request.
 
@@ -50,17 +55,18 @@ The custom exporter converts those genuine SDK spans to the Workshop JSON trace 
 
 ```bash
 cd /home/developer/src/galileo-lab || exit 1
-python3 workshop_results.py inspect
-python3 workshop_results.py open --view tokens
-python3 workshop_results.py open --view latency
+python3 workshop_results.py inspect --run traced
+python3 workshop_results.py open --run traced --view tokens
+python3 workshop_results.py open --run traced --view latency
 ```
 
 Request one document with `--top-k 1`, keeping the retrieval span enabled, and compare with the previous three-document request:
 
 ```bash
 cd /home/developer/src/galileo-lab || exit 1
-python3 workshop_app.py --trace-retrieval --top-k 1
-python3 workshop_results.py compare
+python3 workshop_app.py --trace-retrieval --top-k 1 --label context
+python3 workshop_results.py compare --before traced --after context
+python3 workshop_results.py open --comparison --view response
 ```
 
 Keep the supplied question, model, destination and answer limit the same for this comparison. Comparisons show actual selected document names/counts, SDK duration and provider usage summed across model calls. Model calls can retry transient HTTP errors up to three attempts; failed-attempt token usage remains unknown. Missing usage stays unavailable. Fewer documents do not guarantee a faster or better answer; read both responses for adequacy.
@@ -69,8 +75,8 @@ For the privacy exercise, use fictional contact details:
 
 ```bash
 cd /home/developer/src/galileo-lab || exit 1
-python3 workshop_app.py --trace-retrieval --question 'How should support handle fictional contact alex@example.com and +1 202-555-0147?'
-python3 workshop_results.py open --view privacy
+python3 workshop_app.py --trace-retrieval --top-k 1 --label privacy --question 'This is fictional test data: learner@example.test and +1 202-555-0147. How should a support assistant handle customer contact information? Do not repeat either contact value.'
+python3 workshop_results.py open --run privacy --view privacy
 ```
 
 Inspect parent metadata `pii_input`, `pii_output` and `pii_detector`. The email/phone pattern check records matches; it does not redact, block, or detect every form of personal information.
@@ -99,10 +105,17 @@ python3 workshop_results.py open --view response
 | `--top-k N` or `--context-limit N` | Include up to N matched documents; default 3 |
 | `--max-tokens N` | Set the answer limit passed to each model call; default 180 |
 | `--details` | Also show the saved run and native record IDs |
+| `--label first\|traced\|context\|privacy` | Save a named checkpoint so you can reopen it without copying an ID |
 
-Use `inspect --local` to read local results without API access, `inspect --run UUID` for a specific saved request, and `json --run UUID` to inspect that request's actual upload payload. `open --view response|trace|agent|tokens|latency|privacy` prints one console URL. Privacy selects a request containing contact patterns; other views select the latest successful model request. If records are still indexing, retry `inspect` instead of repeating the model call. `workshop_app.py --details` also shows the local run and native record IDs.
+Use `python3 workshop_results.py list` to see saved requests and their checkpoint names. `inspect --local` reads local results without API access. `inspect`, `json` and `open` accept `--run first`, `traced`, `context`, `privacy` or a saved UUID. A missing checkpoint is reported instead of opening a different request.
 
-The app reuses your existing player identity and destination. New results live under the selected profile's `otel/runs/`; the original suite state and measurements stay separate. Run `player` anytime after setup to show your persistent agent name. Sign in to Workshop with your instructor-provided Viewer account to explore the same records in the UI. API-only learners can use `json` and `inspect`.
+Without `--run`, inspection and response navigation use the same newest request. If that request failed, opening its response reports the failure. It does not substitute an older answer. The original `open --view privacy` shortcut selects the newest request containing contact patterns, including a failed request. Use `--run privacy` for the named privacy checkpoint.
+
+`open --comparison --view response` opens the exact second request from the last successful comparison, even after you run the privacy exercise. If records are still indexing, retry the results action instead of repeating the model call.
+
+Readouts report the final model call's finish reason when available. A warning means the answer reached its output token limit; read whether the advice ended completely. Older saved requests can lack this information.
+
+The app reuses your existing player identity and destination. New results live under the selected profile's `otel/runs/`; the original suite state and measurements stay separate. Run `player` anytime after setup to show your persistent agent name. Follow the DevNet guide's dashboard link and select **Open Galileo Console**. If a sign-in page appears, use the access instructions from your instructor. API-only learners can use `json` and `inspect`.
 
 ## Supplemental controlled suites
 
@@ -193,6 +206,7 @@ All original commands remain available. They use a separate refund scenario with
 | `dataset-preview` | Inspect the four refund cases |
 | `dataset [--name NAME]` | Create or reuse the refund dataset |
 | `experiment [--name NAME]` | Replay both refund variants and upload metrics |
+| `experiment-results [--guided]` | Read matching saved experiment case outputs and metrics without replaying them |
 | `release-gate` | Apply local thresholds to the saved report |
 | `release-gate --variant candidate` | Return success only when the candidate passes |
 | `release-gate --variant baseline` | Demonstrate the baseline's nonzero failure exit |
@@ -222,6 +236,8 @@ python3 galileo_lab.py trends
 ```
 
 Refund experiments replay simulated tools without additional model calls. The helper calculates and uploads their application metrics. The gate reads the saved report and applies local thresholds. Splunk Observability scorers must be enabled separately.
+
+Use `python3 galileo_lab.py experiment-results --guided` to compare the saved experiments' actual case outputs through the API. It reads the exact recorded traces. Missing or pending results stay unavailable. Retry this read instead of replaying the experiment.
 
 The Agent Control credential-term regex allows the safe model call once and denies a matching request with zero protected calls. Both decisions are logged. Benign requests containing its terms can match and paraphrases can pass. This is separate from the email/phone check, not a general PII detector.
 

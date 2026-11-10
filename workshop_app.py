@@ -20,7 +20,8 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from barrybot import DevNetLLM
 from galileo_lab import STATE_DIR, client_or_exit, ensure_project_and_stream, load_local_env
 from observability_tests import get_agent_name, _pii_labels
-from workshop_telemetry import WorkshopExporter, TrackSpans, record_completion
+from workshop_telemetry import (WorkshopExporter, TrackSpans, RUN_LABELS, record_completion,
+    finish_reason, completion_warning, retrieval_summary)
 
 DOCS = Path(__file__).parent / 'support_docs'
 
@@ -31,6 +32,7 @@ def answer_question(tracer, llm, question, top_k=TOP_K, max_tokens=MAX_TOKENS, d
         raise ValueError('Use a non-empty question and positive TOP_K and MAX_TOKENS')
     with tracer.start_as_current_span('answer-question') as request:
         request.set_attributes({'workshop.question': question, 'workshop.top_k': top_k,
+            'workshop.trace_retrieval': trace_retrieval, 'workshop.search_called': False,
             'gen_ai.request.max_tokens': max_tokens, 'gen_ai.request.model': llm.model,
             'workshop.model_endpoint': llm.base_url, 'pii_input': ','.join(_pii_labels(question)) or 'none',
             'pii_detector': 'local-email-phone-pattern-v1'})
@@ -93,6 +95,7 @@ def answer_question(tracer, llm, question, top_k=TOP_K, max_tokens=MAX_TOKENS, d
                     query = arguments.get('query') if isinstance(arguments, dict) else None
                     if not isinstance(query, str) or not query.strip():
                         raise ValueError('The search tool needs a non-empty query')
+                    request.set_attribute('workshop.search_called', True)
                     documents = retrieve_documents(query)
                     names = [name for _, name, _ in documents]
                     selected_documents.extend(names)
@@ -116,6 +119,7 @@ def main(argv=None):
     parser.add_argument('--question', default=QUESTION)
     parser.add_argument('--interactive', action='store_true', help='Enter an optional question in the terminal')
     parser.add_argument('--details', action='store_true', help='Show saved run and native record identifiers')
+    parser.add_argument('--label', choices=RUN_LABELS, help='Save this request as a named workshop checkpoint')
     parser.add_argument('--top-k', '--context-limit', type=int, default=TOP_K, dest='top_k')
     parser.add_argument('--max-tokens', type=int, default=MAX_TOKENS)
     parser.add_argument('--trace-retrieval', action='store_true',
@@ -136,7 +140,7 @@ def main(argv=None):
         destination = {'api_base_url': client.base_url, **ensure_project_and_stream(client),
             'console_url': os.environ.get('GALILEO_CONSOLE_URL', 'https://app.galileo.ai/barry-2')}
         agent_name = get_agent_name(STATE_DIR)
-        exporter = WorkshopExporter(client, destination, STATE_DIR)
+        exporter = WorkshopExporter(client, destination, STATE_DIR, run_label=args.label)
         provider = TracerProvider(resource=Resource.create({'service.name': agent_name}))
         provider.add_span_processor(TrackSpans(exporter))
         provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -147,16 +151,27 @@ def main(argv=None):
         if not provider.force_flush() or not exporter.receipts:
             raise RuntimeError('SDK spans are incomplete; inspect the unfinished request before rerunning')
         receipt = exporter.receipts[-1]
+        print('Finish reason: ' + str(finish_reason(receipt) or 'unavailable'))
+        if completion_warning(receipt):
+            print('Warning: ' + completion_warning(receipt))
+        print(retrieval_summary(receipt))
+        label_saved = receipt.get('label_status') == 'saved'
+        if label_saved:
+            print('Saved checkpoint: ' + args.label)
+        elif receipt.get('label_error'):
+            print(f"Checkpoint {args.label} was not saved: {receipt['label_error']}", file=sys.stderr)
+            print(f"The request is saved. Retry the label only: python3 workshop_results.py label {args.label} --run {receipt['run_id']}", file=sys.stderr)
         print(f"\nOTel trace ID: {receipt['otel_trace_id']}")
         print(f"Request: {receipt['duration_ns'] / 1_000_000:.1f} ms | Provider tokens: {receipt['usage']['total_tokens'] if receipt['usage']['total_tokens'] is not None else 'unavailable'}")
         if args.details:
             print(f"Run: {receipt['run_id']}\nNative trace UUID: {receipt['native_trace_id']}")
             print(f"Upload: {receipt['upload_status']} | Record lookup: {('available' if receipt['readback_status'] == 'verified' else receipt['readback_status'])}")
-        print('Explore: python3 workshop_results.py json')
-        print('Open response: python3 workshop_results.py open --view response')
+        selection = ' --run ' + (args.label if label_saved else receipt['run_id'])
+        print('Explore: python3 workshop_results.py json' + selection)
+        print('Open response: python3 workshop_results.py open --view response' + selection)
         if receipt['upload_status'] != 'accepted' or receipt['readback_status'] == 'failed':
             raise RuntimeError(receipt.get('delivery_error', 'Trace delivery failed'))
-        return 0
+        return 1 if receipt.get('label_error') else 0
     except Exception as exc:
         print(f'Workshop error: {exc}', file=sys.stderr)
         return 1

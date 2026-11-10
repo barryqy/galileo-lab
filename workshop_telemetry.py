@@ -18,6 +18,8 @@ from opentelemetry.trace import StatusCode
 from galileo_client import GalileoApiError
 from observability_tests import TOKEN_FIELDS, _pii_labels
 
+RUN_LABELS = ('first', 'traced', 'context', 'privacy')
+
 
 class PendingRecords(ValueError):
     pass
@@ -52,6 +54,58 @@ def write_json(path, payload):
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+
+
+def load_labels(state_dir):
+    path = Path(state_dir) / 'otel/labels.json'
+    if not path.exists():
+        return {}
+    labels = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(labels, dict) or any(key not in RUN_LABELS or not isinstance(value, str)
+            for key, value in labels.items()):
+        raise ValueError('The saved run labels are invalid; inspect otel/labels.json')
+    return labels
+
+
+def label_run(state_dir, label, run_id):
+    if label not in RUN_LABELS:
+        raise ValueError('Use a workshop label: ' + ', '.join(RUN_LABELS))
+    labels = load_labels(state_dir)
+    labels[label] = run_id
+    write_json(Path(state_dir) / 'otel/labels.json', labels)
+
+
+def finish_reason(receipt):
+    if isinstance(receipt.get('finish_reason'), str):
+        return receipt['finish_reason']
+    for span in reversed(receipt['spans']):
+        if span['type'] == 'llm':
+            return span['attributes'].get('provider.finish_reason')
+    return None
+
+
+def completion_warning(receipt):
+    if finish_reason(receipt) == 'length':
+        return 'The model reached its output token limit; the answer may be incomplete. Read the saved answer before comparing quality.'
+    return None
+
+
+def retrieval_summary(receipt):
+    requested = receipt['request'].get('trace_retrieval')
+    setting = 'enabled' if requested is True else 'disabled' if requested is False else 'unknown (legacy run)'
+    called = receipt['request'].get('search_called')
+    if called is None:
+        if receipt['retrieval_status'] == 'instrumented' or receipt['request'].get('document_count'):
+            called = True
+    if called is False:
+        search = 'not called by the model'
+    elif receipt['retrieval_status'] == 'instrumented':
+        search = 'recorded in a retrieval span'
+    elif called:
+        search = 'called without a retrieval span'
+    else:
+        search = 'unknown (legacy run)'
+    return f'Retrieval tracing: {setting} | Search: {search}'
 
 
 def _iso(nanoseconds):
@@ -92,13 +146,14 @@ class TrackSpans(SpanProcessor):
 
 
 class WorkshopExporter(SpanExporter):
-    def __init__(self, client, destination, state_dir):
+    def __init__(self, client, destination, state_dir, *, run_label=None):
         self.client = client
         self.destination = dict(destination)
         self.state_dir = Path(state_dir)
         self.active = {}
         self.waiting = {}
         self.receipts = []
+        self.run_label = run_label
 
     def export(self, spans):
         result = SpanExportResult.SUCCESS
@@ -121,6 +176,13 @@ class WorkshopExporter(SpanExporter):
                 'reliable': True, 'include_trace_ids': True}
             self._save(receipt)
             self._deliver(receipt, trace)
+            if self.run_label:
+                receipt['label'] = self.run_label
+                try:
+                    label_run(self.state_dir, self.run_label, receipt['run_id'])
+                    receipt['label_status'] = 'saved'
+                except (OSError, ValueError) as exc:
+                    receipt.update(label_status='failed', label_error=f'{type(exc).__name__}: {exc}')
             self._save(receipt)
             self.receipts.append(receipt)
             if receipt['upload_status'] != 'accepted' or receipt['readback_status'] == 'failed':
@@ -210,18 +272,23 @@ class WorkshopExporter(SpanExporter):
             'otel_trace_id': otel_trace, 'otel_root_span_id': format(root.context.span_id, '016x'),
             'native_trace_id': trace_id, 'spans': saved_spans, 'answer': answer,
             'status': 'error' if root.status.status_code == StatusCode.ERROR else 'ok',
-            'model_status': model_status, 'duration_ns': root.end_time - root.start_time,
+            'model_status': model_status, 'finish_reason': model_attrs.get('provider.finish_reason'),
+            'duration_ns': root.end_time - root.start_time,
             'request': {'question': attrs.get('workshop.question'), 'top_k': attrs.get('workshop.top_k'),
                 'max_tokens': attrs.get('gen_ai.request.max_tokens'), 'requested_model': attrs.get('gen_ai.request.model'),
                 'model': model_attrs.get('provider.model') or model_attrs.get('gen_ai.response.model'),
                 'model_endpoint': attrs.get('workshop.model_endpoint'),
+                'trace_retrieval': attrs.get('workshop.trace_retrieval'),
+                'search_called': attrs.get('workshop.search_called'),
                 'document_count': attrs.get('workshop.document_count'),
                 'documents': json.loads(attrs.get('workshop.documents', '[]'))},
             'usage': {name: _sum_usage(models, field) for name, field in TOKEN_FIELDS.items()},
             'privacy': {'input_labels': _pii_labels(attrs.get('workshop.question', '')),
                 'output_labels': _pii_labels(answer) if isinstance(answer, str) else None,
                 'source': 'local-email-phone-pattern-v1'},
-            'retrieval_status': 'instrumented' if any(item['name'] == 'retrieve-documents' for item in saved_spans) else 'not-instrumented',
+            'retrieval_status': ('instrumented' if any(item['name'] == 'retrieve-documents' for item in saved_spans)
+                else 'enabled-no-search' if attrs.get('workshop.trace_retrieval') is True
+                and attrs.get('workshop.search_called') is False else 'not-instrumented'),
             'upload_status': 'not-attempted', 'readback_status': 'not-attempted'}
         return receipt, trace
 
